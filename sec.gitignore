@@ -1,4 +1,5 @@
 .env
+vice_users.db
 __pycache__/
 *.pyc
 .venv/
