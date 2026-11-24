@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# LOCAL SQLITE DATABASE FOR USER ACCOUNTS & ISOLATED CHAT HISTORY BLOCKS
+# LOCAL SQLITE DATABASE (USERS, PERSISTENT SESSIONS & ISOLATED CHAT BLOCKS)
 # -----------------------------------------------------------------------------
 DB_PATH = "vice_users.db"
 
@@ -35,6 +35,14 @@ def init_db():
             password_hash TEXT NOT NULL,
             salt TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (username) REFERENCES users(username)
         )
     """)
     c.execute("""
@@ -53,6 +61,34 @@ def init_db():
 def hash_password(password: str, salt: str) -> str:
     return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
 
+def create_session_token(username: str) -> str:
+    token = os.urandom(24).hex()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO sessions (token, username) VALUES (?, ?)", (token, username))
+    conn.commit()
+    conn.close()
+    return token
+
+def get_user_from_token(token: str) -> str | None:
+    if not token:
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT username FROM sessions WHERE token = ?", (token,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def delete_session_token(token: str):
+    if not token:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM sessions WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+
 def register_user(username: str, password: str) -> tuple[bool, str]:
     username = username.strip().lower()
     if len(username) < 3 or len(password) < 4:
@@ -66,7 +102,6 @@ def register_user(username: str, password: str) -> tuple[bool, str]:
     salt = os.urandom(16).hex()
     pw_hash = hash_password(password, salt)
     c.execute("INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)", (username, pw_hash, salt))
-    # Seed welcome message in user's personal chat block
     welcome_msg = f"Welcome to **Vice City Neural Link**, Agent **{username.upper()}**. Your encrypted chat block is active. What's our next move?"
     c.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, "assistant", welcome_msg))
     conn.commit()
@@ -374,7 +409,7 @@ div[data-testid="stChatInput"] {
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# SESSION STATE INITIALIZATION
+# SESSION STATE & PERSISTENT REFRESH RESTORATION
 # -----------------------------------------------------------------------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -382,6 +417,18 @@ if "current_user" not in st.session_state:
     st.session_state.current_user = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+# Auto-restore session from URL query param on browser refresh
+if not st.session_state.authenticated:
+    url_token = st.query_params.get("session", "")
+    restored_user = get_user_from_token(url_token)
+    if restored_user:
+        st.session_state.authenticated = True
+        st.session_state.current_user = restored_user
+        st.session_state.messages = load_user_history(restored_user)
+    elif url_token:
+        # Clear invalid/expired token
+        st.query_params.clear()
 
 # -----------------------------------------------------------------------------
 # API KEY SECURITY CHECK (READ ONLY FROM .ENV / CLOUD SECRETS)
@@ -405,251 +452,3 @@ if not api_key or "PASTE_YOUR" in api_key:
 # -----------------------------------------------------------------------------
 st.markdown("""
 <div class="vice-header">
-    <div class="vice-title">VICE AI // LEONIDA NET</div>
-    <div class="vice-subtitle">FUTURISTIC LANGCHAIN × OPENROUTER NEURAL INTERFACE</div>
-</div>
-""", unsafe_allow_html=True)
-
-# -----------------------------------------------------------------------------
-# GATEKEEPER: LOGIN & REGISTRATION PAGE BEFORE CHAT INTERFACE
-# -----------------------------------------------------------------------------
-if not st.session_state.authenticated:
-    _, center_col, _ = st.columns([1, 1.4, 1])
-
-    with center_col:
-        st.markdown("""
-        <div class="login-box">
-            <h2 style="font-family:'Orbitron',sans-serif; color:#00f2fe; margin-top:0; letter-spacing:2px;">
-                🔐 AGENT ACCESS TERMINAL
-            </h2>
-            <p style="color:#d8b4fe; font-size:1rem; margin-bottom:16px;">
-                Sign in or create an agent handle to unlock your dedicated encrypted chat memory block.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        tab_login, tab_register = st.tabs(["⚡ SIGN IN", "🆕 CREATE AGENT ID"])
-
-        with tab_login:
-            with st.form("login_form"):
-                login_user = st.text_input("Agent Handle (Username)", placeholder="e.g. lucia_vc")
-                login_pass = st.text_input("Passcode", type="password", placeholder="••••••••")
-                submit_login = st.form_submit_button("ENTER VICE CITY NET", use_container_width=True)
-
-                if submit_login:
-                    if authenticate_user(login_user, login_pass):
-                        clean_user = login_user.strip().lower()
-                        st.session_state.authenticated = True
-                        st.session_state.current_user = clean_user
-                        st.session_state.messages = load_user_history(clean_user)
-                        st.rerun()
-                    else:
-                        st.error("Access Denied: Invalid agent handle or passcode.")
-
-        with tab_register:
-            with st.form("register_form"):
-                new_user = st.text_input("Choose Agent Handle", placeholder="Min 3 characters")
-                new_pass = st.text_input("Create Passcode", type="password", placeholder="Min 4 characters")
-                submit_reg = st.form_submit_button("INITIALIZE AGENT BLOCK", use_container_width=True)
-
-                if submit_reg:
-                    ok, msg = register_user(new_user, new_pass)
-                    if ok:
-                        clean_user = new_user.strip().lower()
-                        st.session_state.authenticated = True
-                        st.session_state.current_user = clean_user
-                        st.session_state.messages = load_user_history(clean_user)
-                        st.rerun()
-                    else:
-                        st.error(msg)
-
-    st.stop()
-
-# -----------------------------------------------------------------------------
-# AUTHENTICATED ZONE: TOP DROPDOWN NAVIGATION BAR
-# -----------------------------------------------------------------------------
-current_user = st.session_state.current_user
-
-nav_col1, nav_col2, nav_col3, nav_col4 = st.columns([2, 2, 1, 1])
-
-with nav_col1:
-    active_page = st.selectbox(
-        "NAVIGATION HUD",
-        options=["💬 Neural Chat Interface", "📊 Telemetry Dashboard"],
-        index=0,
-        label_visibility="collapsed"
-    )
-
-FREE_MODELS = {
-    "OpenRouter Auto Free Router": "openrouter/free",
-    "Meta Llama 3.3 70B (Free)": "meta-llama/llama-3.3-70b-instruct:free",
-    "Google Gemma 2 9B (Free)": "google/gemma-2-9b-it:free",
-    "Mistral 7B Instruct (Free)": "mistralai/mistral-7b-instruct:free",
-}
-
-with nav_col2:
-    selected_model_label = st.selectbox(
-        "AI CORE MODEL",
-        options=list(FREE_MODELS.keys()),
-        index=0,
-        label_visibility="collapsed"
-    )
-    selected_model_id = FREE_MODELS[selected_model_label]
-
-with nav_col3:
-    if st.button("WIPE BLOCK", use_container_width=True):
-        wipe_user_history(current_user)
-        st.session_state.messages = load_user_history(current_user)
-        st.rerun()
-
-with nav_col4:
-    if st.button("LOGOUT", use_container_width=True):
-        st.session_state.authenticated = False
-        st.session_state.current_user = None
-        st.session_state.messages = []
-        st.rerun()
-
-# -----------------------------------------------------------------------------
-# LANGCHAIN OPENROUTER CLIENT BUILDER
-# -----------------------------------------------------------------------------
-def get_llm(model_name: str, key: str) -> ChatOpenAI:
-    return ChatOpenAI(
-        model=model_name,
-        openai_api_key=key,
-        openai_api_base="https://openrouter.ai/api/v1",
-        temperature=0.7,
-        streaming=True,
-        default_headers={
-            "HTTP-Referer": "http://localhost:8501",
-            "X-Title": "Vice AI Local Chatbot",
-        },
-    )
-
-# Calculate user-specific telemetry
-user_prompts_count = sum(1 for m in st.session_state.messages if m["role"] == "user")
-est_tokens = sum(int(len(m["content"].split()) * 1.3) for m in st.session_state.messages)
-
-# -----------------------------------------------------------------------------
-# PAGE 1: TELEMETRY DASHBOARD & USER SAVED BLOCK INSPECTOR
-# -----------------------------------------------------------------------------
-if active_page == "📊 Telemetry Dashboard":
-    st.markdown(f"### ⚡ TELEMETRY HUD // AGENT: `{current_user.upper()}`")
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(f"""
-        <div class="cyber-card">
-            <h3>Active Agent</h3>
-            <p>{current_user.upper()}</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"""
-        <div class="cyber-card">
-            <h3>Saved Block Messages</h3>
-            <p>{len(st.session_state.messages)}</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with c3:
-        st.markdown(f"""
-        <div class="cyber-card">
-            <h3>Est. Block Tokens</h3>
-            <p>{est_tokens}</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with c4:
-        masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "SECURED"
-        st.markdown(f"""
-        <div class="cyber-card">
-            <h3>GitHub Leak Shield</h3>
-            <p style="font-size:1.05rem; padding-top:8px;">ACTIVE ({masked_key})</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.markdown(f"#### 🗄️ {current_user.upper()}'S PERSISTENT CHAT MEMORY BLOCK")
-    with st.container(border=True):
-        for idx, item in enumerate(st.session_state.messages, start=1):
-            role_tag = "🧑 AGENT" if item["role"] == "user" else "🤖 VICE AI"
-            ts = item.get("timestamp", "SESSION")
-            st.markdown(f"**`#{idx}` [{ts}] {role_tag}:** {item['content']}")
-
-# -----------------------------------------------------------------------------
-# PAGE 2: NEURAL CHAT INTERFACE (WITH DEDICATED USER HISTORY BLOCK)
-# -----------------------------------------------------------------------------
-else:
-    st.markdown(f"""
-    <div class="memory-block-header">
-        🗄️ DEDICATED MEMORY BLOCK: AGENT [{current_user.upper()}] &nbsp;|&nbsp;
-        STORED TRANSMISSIONS: {len(st.session_state.messages)} &nbsp;|&nbsp;
-        STATUS: AUTO-SAVING TO ISOLATED BLOCK
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Dedicated collapsible block showing the user's saved history log
-    with st.expander(f"📂 View {current_user.upper()}'s Saved History Block ({len(st.session_state.messages)} messages)", expanded=False):
-        for idx, msg in enumerate(st.session_state.messages, start=1):
-            speaker = current_user.upper() if msg["role"] == "user" else "VICE AI"
-            st.markdown(f"`[{idx}]` **{speaker}:** {msg['content']}")
-
-    # Main Chat Feed for the logged-in user
-    for msg in st.session_state.messages:
-        avatar = AI_AVATAR_URI if msg["role"] == "assistant" else USER_AVATAR_URI
-        with st.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
-
-    # User prompt input
-    if user_prompt := st.chat_input(f"Transmit as {current_user.upper()} to Vice AI..."):
-        # Save & append user message to this user's isolated DB block
-        save_user_message(current_user, "user", user_prompt)
-        st.session_state.messages.append({"role": "user", "content": user_prompt})
-
-        with st.chat_message("user", avatar=USER_AVATAR_URI):
-            st.markdown(user_prompt)
-
-        # Render AI response with typing animation + streaming
-        with st.chat_message("assistant", avatar=AI_AVATAR_URI):
-            typing_placeholder = st.empty()
-            typing_placeholder.markdown("""
-            <div class="typing-container">
-                <div class="typing-dots">
-                    <span></span><span></span><span></span>
-                </div>
-                <span>VICE AI IS TYPING...</span>
-            </div>
-            """, unsafe_allow_html=True)
-
-            lc_messages = [
-                SystemMessage(
-                    content=(
-                        f"You are Vice AI, a sharp, stylish, futuristic AI assistant inspired by Vice City. "
-                        f"You are currently speaking with Agent {current_user}. Keep responses helpful, clear, and engaging."
-                    )
-                )
-            ]
-            for m in st.session_state.messages:
-                if m["role"] == "user":
-                    lc_messages.append(HumanMessage(content=m["content"]))
-                else:
-                    lc_messages.append(AIMessage(content=m["content"]))
-
-            try:
-                llm = get_llm(selected_model_id, api_key)
-                full_response = ""
-                first_chunk = True
-
-                for chunk in llm.stream(lc_messages):
-                    token = chunk.content or ""
-                    if first_chunk and token:
-                        time.sleep(0.35)
-                        first_chunk = False
-                    full_response += token
-                    typing_placeholder.markdown(full_response + "▌")
-
-                typing_placeholder.markdown(full_response)
-                save_user_message(current_user, "assistant", full_response)
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-            except Exception as e:
-                typing_placeholder.empty()
-                st.error(f"Signal disrupted: {e}")
