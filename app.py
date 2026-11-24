@@ -1,5 +1,8 @@
 import os
 import time
+import base64
+import hashlib
+import sqlite3
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -19,7 +22,97 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# ANIME FEMALE AVATAR (SVG DATA URI - SELF-CONTAINED)
+# LOCAL SQLITE DATABASE FOR USER ACCOUNTS & ISOLATED CHAT HISTORY BLOCKS
+# -----------------------------------------------------------------------------
+DB_PATH = "vice_users.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (username) REFERENCES users(username)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def hash_password(password: str, salt: str) -> str:
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+def register_user(username: str, password: str) -> tuple[bool, str]:
+    username = username.strip().lower()
+    if len(username) < 3 or len(password) < 4:
+        return False, "Username must be at least 3 chars and password at least 4 chars."
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT username FROM users WHERE username = ?", (username,))
+    if c.fetchone():
+        conn.close()
+        return False, "Agent handle already exists. Switch to Sign In."
+    salt = os.urandom(16).hex()
+    pw_hash = hash_password(password, salt)
+    c.execute("INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)", (username, pw_hash, salt))
+    # Seed welcome message in user's personal chat block
+    welcome_msg = f"Welcome to **Vice City Neural Link**, Agent **{username.upper()}**. Your encrypted chat block is active. What's our next move?"
+    c.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, "assistant", welcome_msg))
+    conn.commit()
+    conn.close()
+    return True, "Account initialized! Logging you into Leonida Net..."
+
+def authenticate_user(username: str, password: str) -> bool:
+    username = username.strip().lower()
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT password_hash, salt FROM users WHERE username = ?", (username,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return False
+    stored_hash, salt = row
+    return hash_password(password, salt) == stored_hash
+
+def load_user_history(username: str) -> list[dict]:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT role, content, timestamp FROM chat_history WHERE username = ? ORDER BY id ASC", (username,))
+    rows = c.fetchall()
+    conn.close()
+    return [{"role": r[0], "content": r[1], "timestamp": r[2]} for r in rows]
+
+def save_user_message(username: str, role: str, content: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, role, content))
+    conn.commit()
+    conn.close()
+
+def wipe_user_history(username: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM chat_history WHERE username = ?", (username,))
+    reset_msg = f"Memory block wiped for Agent **{username.upper()}**. Fresh neon slate—where are we headed?"
+    c.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, "assistant", reset_msg))
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# -----------------------------------------------------------------------------
+# ANIME FEMALE AVATAR & USER AVATAR (SELF-CONTAINED SVG DATA URIS)
 # -----------------------------------------------------------------------------
 ANIME_AVATAR_SVG = """
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
@@ -36,28 +129,20 @@ ANIME_AVATAR_SVG = """
   </defs>
   <circle cx="60" cy="60" r="58" fill="url(#bgGrad)" stroke="#00f2fe" stroke-width="3"/>
   <circle cx="60" cy="60" r="52" fill="#120822"/>
-  <!-- Back Hair -->
   <path d="M28 55 Q25 95 36 105 L84 105 Q95 95 92 55 Z" fill="url(#hairGrad)"/>
-  <!-- Shoulders / Cyber Jacket -->
   <path d="M30 108 Q60 92 90 108 L95 115 L25 115 Z" fill="#1f1135" stroke="#00f2fe" stroke-width="2"/>
-  <!-- Neck -->
   <rect x="53" y="76" width="14" height="16" rx="4" fill="#ffe0d2"/>
-  <!-- Face -->
   <path d="M38 48 Q38 80 60 83 Q82 80 82 48 Q82 28 60 28 Q38 28 38 48 Z" fill="#ffece4"/>
-  <!-- Anime Eyes -->
   <ellipse cx="49" cy="56" rx="5.5" ry="6.5" fill="#1a0b2e"/>
   <ellipse cx="71" cy="56" rx="5.5" ry="6.5" fill="#1a0b2e"/>
   <circle cx="49" cy="57" r="3.5" fill="#00f2fe"/>
   <circle cx="71" cy="57" r="3.5" fill="#00f2fe"/>
   <circle cx="47.5" cy="54" r="1.8" fill="#ffffff"/>
   <circle cx="69.5" cy="54" r="1.8" fill="#ffffff"/>
-  <!-- Blush & Smile -->
   <ellipse cx="43" cy="64" rx="4" ry="2" fill="#ff71ce" opacity="0.5"/>
   <ellipse cx="77" cy="64" rx="4" ry="2" fill="#ff71ce" opacity="0.5"/>
   <path d="M56 69 Q60 73 64 69" stroke="#d64579" stroke-width="2" fill="none" stroke-linecap="round"/>
-  <!-- Front Bangs -->
   <path d="M34 52 Q36 22 60 22 Q84 22 86 52 Q78 36 70 46 Q64 33 60 47 Q54 33 48 46 Q41 36 34 52 Z" fill="url(#hairGrad)"/>
-  <!-- Cyber Visor / Headset Accent -->
   <rect x="32" y="46" width="6" height="14" rx="3" fill="#00f2fe"/>
   <rect x="82" y="46" width="6" height="14" rx="3" fill="#ff007f"/>
 </svg>
@@ -72,7 +157,6 @@ USER_AVATAR_SVG = """
 """
 
 def svg_to_data_uri(svg_str: str) -> str:
-    import base64
     b64 = base64.b64encode(svg_str.strip().encode("utf-8")).decode("utf-8")
     return f"data:image/svg+xml;base64,{b64}"
 
@@ -86,14 +170,12 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;600;700&display=swap');
 
-/* Global Background */
 .stApp {
     background: radial-gradient(circle at 15% 15%, #2b0938 0%, #11051f 45%, #070312 100%);
     color: #f4eaff;
     font-family: 'Rajdhani', sans-serif;
 }
 
-/* Hide default Streamlit header/footer clutter */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {background: transparent !important;}
@@ -129,6 +211,32 @@ header {background: transparent !important;}
     margin-top: 4px;
 }
 
+/* Login Box Container */
+.login-box {
+    background: rgba(20, 9, 43, 0.85);
+    border: 1px solid #00f2fe;
+    border-top: 4px solid #ff007f;
+    border-radius: 18px;
+    padding: 28px;
+    box-shadow: 0 0 35px rgba(255, 0, 127, 0.25), 0 0 20px rgba(0, 242, 254, 0.2);
+    backdrop-filter: blur(14px);
+    margin-top: 10px;
+}
+
+/* User Memory Block Box inside Chat */
+.memory-block-header {
+    background: rgba(0, 242, 254, 0.08);
+    border: 1px solid rgba(0, 242, 254, 0.35);
+    border-left: 4px solid #00f2fe;
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.82rem;
+    color: #00f2fe;
+    letter-spacing: 1px;
+}
+
 /* Top Dropdown / Selectbox Styling */
 div[data-baseweb="select"] > div {
     background-color: rgba(20, 9, 43, 0.85) !important;
@@ -136,6 +244,14 @@ div[data-baseweb="select"] > div {
     border-radius: 10px !important;
     color: #ffffff !important;
     box-shadow: 0 0 12px rgba(0, 242, 254, 0.25);
+}
+
+/* Text Inputs on Login Screen */
+div[data-baseweb="input"] > div {
+    background-color: rgba(14, 6, 30, 0.9) !important;
+    border: 1px solid rgba(255, 113, 206, 0.5) !important;
+    border-radius: 10px !important;
+    color: #ffffff !important;
 }
 
 /* Dashboard Metric Cards */
@@ -160,7 +276,7 @@ div[data-baseweb="select"] > div {
 
 .cyber-card p {
     font-family: 'Orbitron', sans-serif;
-    font-size: 1.75rem;
+    font-size: 1.65rem;
     font-weight: 700;
     color: #00f2fe;
     margin: 0;
@@ -242,11 +358,11 @@ div[data-testid="stChatInput"] {
     background: linear-gradient(90deg, #ff007f, #7928ca);
     color: white;
     font-family: 'Orbitron', sans-serif;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     letter-spacing: 1px;
     border: 1px solid #00f2fe;
     border-radius: 10px;
-    padding: 8px 18px;
+    padding: 8px 14px;
     transition: all 0.25s ease;
 }
 
@@ -260,22 +376,32 @@ div[data-testid="stChatInput"] {
 # -----------------------------------------------------------------------------
 # SESSION STATE INITIALIZATION
 # -----------------------------------------------------------------------------
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {
-            "role": "assistant",
-            "content": "Welcome to **Vice City Neural Link**. Neon lights are online and my OpenRouter circuits are warmed up. What's our next move?"
-        }
-    ]
-
-if "total_prompts" not in st.session_state:
-    st.session_state.total_prompts = 0
-
-if "est_tokens" not in st.session_state:
-    st.session_state.est_tokens = 0
+    st.session_state.messages = []
 
 # -----------------------------------------------------------------------------
-# HEADER & TOP DROPDOWN NAVIGATION BAR
+# API KEY SECURITY CHECK (READ ONLY FROM .ENV / CLOUD SECRETS)
+# -----------------------------------------------------------------------------
+api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+if not api_key:
+    try:
+        api_key = st.secrets.get("OPENROUTER_API_KEY", "").strip()
+    except Exception:
+        api_key = ""
+
+if not api_key or "PASTE_YOUR" in api_key:
+    st.error(
+        "🔒 **API Key Missing:** Add your regenerated `OPENROUTER_API_KEY` inside your local `.env` file "
+        "(or Streamlit Cloud Secrets). Never hardcode keys inside `app.py` before pushing to GitHub."
+    )
+    st.stop()
+
+# -----------------------------------------------------------------------------
+# HEADER BANNER
 # -----------------------------------------------------------------------------
 st.markdown("""
 <div class="vice-header">
@@ -284,7 +410,67 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-nav_col1, nav_col2, nav_col3 = st.columns([2, 2, 1])
+# -----------------------------------------------------------------------------
+# GATEKEEPER: LOGIN & REGISTRATION PAGE BEFORE CHAT INTERFACE
+# -----------------------------------------------------------------------------
+if not st.session_state.authenticated:
+    _, center_col, _ = st.columns([1, 1.4, 1])
+
+    with center_col:
+        st.markdown("""
+        <div class="login-box">
+            <h2 style="font-family:'Orbitron',sans-serif; color:#00f2fe; margin-top:0; letter-spacing:2px;">
+                🔐 AGENT ACCESS TERMINAL
+            </h2>
+            <p style="color:#d8b4fe; font-size:1rem; margin-bottom:16px;">
+                Sign in or create an agent handle to unlock your dedicated encrypted chat memory block.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        tab_login, tab_register = st.tabs(["⚡ SIGN IN", "🆕 CREATE AGENT ID"])
+
+        with tab_login:
+            with st.form("login_form"):
+                login_user = st.text_input("Agent Handle (Username)", placeholder="e.g. lucia_vc")
+                login_pass = st.text_input("Passcode", type="password", placeholder="••••••••")
+                submit_login = st.form_submit_button("ENTER VICE CITY NET", use_container_width=True)
+
+                if submit_login:
+                    if authenticate_user(login_user, login_pass):
+                        clean_user = login_user.strip().lower()
+                        st.session_state.authenticated = True
+                        st.session_state.current_user = clean_user
+                        st.session_state.messages = load_user_history(clean_user)
+                        st.rerun()
+                    else:
+                        st.error("Access Denied: Invalid agent handle or passcode.")
+
+        with tab_register:
+            with st.form("register_form"):
+                new_user = st.text_input("Choose Agent Handle", placeholder="Min 3 characters")
+                new_pass = st.text_input("Create Passcode", type="password", placeholder="Min 4 characters")
+                submit_reg = st.form_submit_button("INITIALIZE AGENT BLOCK", use_container_width=True)
+
+                if submit_reg:
+                    ok, msg = register_user(new_user, new_pass)
+                    if ok:
+                        clean_user = new_user.strip().lower()
+                        st.session_state.authenticated = True
+                        st.session_state.current_user = clean_user
+                        st.session_state.messages = load_user_history(clean_user)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+    st.stop()
+
+# -----------------------------------------------------------------------------
+# AUTHENTICATED ZONE: TOP DROPDOWN NAVIGATION BAR
+# -----------------------------------------------------------------------------
+current_user = st.session_state.current_user
+
+nav_col1, nav_col2, nav_col3, nav_col4 = st.columns([2, 2, 1, 1])
 
 with nav_col1:
     active_page = st.selectbox(
@@ -311,28 +497,17 @@ with nav_col2:
     selected_model_id = FREE_MODELS[selected_model_label]
 
 with nav_col3:
-    if st.button("WIPE MEMORY", use_container_width=True):
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": "Memory wiped clean. Fresh neon slate—where are we headed?"
-            }
-        ]
-        st.session_state.total_prompts = 0
-        st.session_state.est_tokens = 0
+    if st.button("WIPE BLOCK", use_container_width=True):
+        wipe_user_history(current_user)
+        st.session_state.messages = load_user_history(current_user)
         st.rerun()
 
-# -----------------------------------------------------------------------------
-# API KEY SECURITY CHECK (READ ONLY FROM .ENV / ENVIRONMENT)
-# -----------------------------------------------------------------------------
-api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-
-if not api_key or "PASTE_YOUR" in api_key:
-    st.error(
-        "🔒 **API Key Missing:** Add your regenerated `OPENROUTER_API_KEY` inside your local `.env` file. "
-        "Never hardcode keys inside `app.py` before pushing to GitHub."
-    )
-    st.stop()
+with nav_col4:
+    if st.button("LOGOUT", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.current_user = None
+        st.session_state.messages = []
+        st.rerun()
 
 # -----------------------------------------------------------------------------
 # LANGCHAIN OPENROUTER CLIENT BUILDER
@@ -350,32 +525,36 @@ def get_llm(model_name: str, key: str) -> ChatOpenAI:
         },
     )
 
+# Calculate user-specific telemetry
+user_prompts_count = sum(1 for m in st.session_state.messages if m["role"] == "user")
+est_tokens = sum(int(len(m["content"].split()) * 1.3) for m in st.session_state.messages)
+
 # -----------------------------------------------------------------------------
-# PAGE 1: TELEMETRY DASHBOARD (TOP DROPDOWN SELECTION)
+# PAGE 1: TELEMETRY DASHBOARD & USER SAVED BLOCK INSPECTOR
 # -----------------------------------------------------------------------------
 if active_page == "📊 Telemetry Dashboard":
-    st.markdown("### ⚡ SYSTEM TELEMETRY & SECURITY HUD")
+    st.markdown(f"### ⚡ TELEMETRY HUD // AGENT: `{current_user.upper()}`")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown(f"""
         <div class="cyber-card">
-            <h3>Prompts Sent</h3>
-            <p>{st.session_state.total_prompts}</p>
+            <h3>Active Agent</h3>
+            <p>{current_user.upper()}</p>
         </div>
         """, unsafe_allow_html=True)
     with c2:
         st.markdown(f"""
         <div class="cyber-card">
-            <h3>Context Messages</h3>
+            <h3>Saved Block Messages</h3>
             <p>{len(st.session_state.messages)}</p>
         </div>
         """, unsafe_allow_html=True)
     with c3:
         st.markdown(f"""
         <div class="cyber-card">
-            <h3>Est. Session Tokens</h3>
-            <p>{st.session_state.est_tokens}</p>
+            <h3>Est. Block Tokens</h3>
+            <p>{est_tokens}</p>
         </div>
         """, unsafe_allow_html=True)
     with c4:
@@ -383,43 +562,47 @@ if active_page == "📊 Telemetry Dashboard":
         st.markdown(f"""
         <div class="cyber-card">
             <h3>GitHub Leak Shield</h3>
-            <p style="font-size:1.1rem; padding-top:8px;">ACTIVE ({masked_key})</p>
+            <p style="font-size:1.05rem; padding-top:8px;">ACTIVE ({masked_key})</p>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("---")
-    col_left, col_right = st.columns(2)
-    with col_left:
-        st.markdown("#### 🛡️ GitHub Anti-Leak Verification")
-        st.info(
-            "1. **Environment Isolation:** `app.py` reads `OPENROUTER_API_KEY` via `os.getenv()`.\n"
-            "2. **Git Ignore Enforcement:** `.env` is listed in `.gitignore` so `git push` never uploads your credentials.\n"
-            "3. **Endpoint:** `https://openrouter.ai/api/v1` via `langchain_openai.ChatOpenAI`."
-        )
-    with col_right:
-        st.markdown("#### 🎛️ Active Neural Core")
-        st.success(
-            f"**Selected Tier:** {selected_model_label}\n\n"
-            f"**Model ID:** `{selected_model_id}`\n\n"
-            "Switch back to **💬 Neural Chat Interface** from the top dropdown to continue chatting."
-        )
+    st.markdown(f"#### 🗄️ {current_user.upper()}'S PERSISTENT CHAT MEMORY BLOCK")
+    with st.container(border=True):
+        for idx, item in enumerate(st.session_state.messages, start=1):
+            role_tag = "🧑 AGENT" if item["role"] == "user" else "🤖 VICE AI"
+            ts = item.get("timestamp", "SESSION")
+            st.markdown(f"**`#{idx}` [{ts}] {role_tag}:** {item['content']}")
 
 # -----------------------------------------------------------------------------
-# PAGE 2: NEURAL CHAT INTERFACE
+# PAGE 2: NEURAL CHAT INTERFACE (WITH DEDICATED USER HISTORY BLOCK)
 # -----------------------------------------------------------------------------
 else:
-    # Render conversation history
+    st.markdown(f"""
+    <div class="memory-block-header">
+        🗄️ DEDICATED MEMORY BLOCK: AGENT [{current_user.upper()}] &nbsp;|&nbsp;
+        STORED TRANSMISSIONS: {len(st.session_state.messages)} &nbsp;|&nbsp;
+        STATUS: AUTO-SAVING TO ISOLATED BLOCK
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Dedicated collapsible block showing the user's saved history log
+    with st.expander(f"📂 View {current_user.upper()}'s Saved History Block ({len(st.session_state.messages)} messages)", expanded=False):
+        for idx, msg in enumerate(st.session_state.messages, start=1):
+            speaker = current_user.upper() if msg["role"] == "user" else "VICE AI"
+            st.markdown(f"`[{idx}]` **{speaker}:** {msg['content']}")
+
+    # Main Chat Feed for the logged-in user
     for msg in st.session_state.messages:
         avatar = AI_AVATAR_URI if msg["role"] == "assistant" else USER_AVATAR_URI
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
     # User prompt input
-    if user_prompt := st.chat_input("Transmit message to Vice AI..."):
-        # Append and render user message
+    if user_prompt := st.chat_input(f"Transmit as {current_user.upper()} to Vice AI..."):
+        # Save & append user message to this user's isolated DB block
+        save_user_message(current_user, "user", user_prompt)
         st.session_state.messages.append({"role": "user", "content": user_prompt})
-        st.session_state.total_prompts += 1
-        st.session_state.est_tokens += int(len(user_prompt.split()) * 1.3)
 
         with st.chat_message("user", avatar=USER_AVATAR_URI):
             st.markdown(user_prompt)
@@ -436,12 +619,11 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
-            # Build LangChain message history
             lc_messages = [
                 SystemMessage(
                     content=(
-                        "You are Vice AI, a sharp, stylish, futuristic AI assistant inspired by Vice City. "
-                        "Keep responses helpful, clear, and engaging."
+                        f"You are Vice AI, a sharp, stylish, futuristic AI assistant inspired by Vice City. "
+                        f"You are currently speaking with Agent {current_user}. Keep responses helpful, clear, and engaging."
                     )
                 )
             ]
@@ -459,15 +641,14 @@ else:
                 for chunk in llm.stream(lc_messages):
                     token = chunk.content or ""
                     if first_chunk and token:
-                        # Small pause so the neon typing animation is visible before text streams
                         time.sleep(0.35)
                         first_chunk = False
                     full_response += token
                     typing_placeholder.markdown(full_response + "▌")
 
                 typing_placeholder.markdown(full_response)
+                save_user_message(current_user, "assistant", full_response)
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
-                st.session_state.est_tokens += int(len(full_response.split()) * 1.3)
 
             except Exception as e:
                 typing_placeholder.empty()
