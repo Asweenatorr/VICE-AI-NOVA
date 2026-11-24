@@ -8,201 +8,124 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-# Load environment variables from local .env file
 load_dotenv()
 
-# -----------------------------------------------------------------------------
-# PAGE CONFIGURATION
-# -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="VICE AI // LEONIDA NET",
     page_icon="🌴",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
 # -----------------------------------------------------------------------------
-# LOCAL SQLITE DATABASE (USERS, PERSISTENT SESSIONS & ISOLATED CHAT BLOCKS)
+# SQLITE DATABASE (USERS, PERSISTENT SESSIONS & ISOLATED CHAT BLOCKS)
 # -----------------------------------------------------------------------------
 DB_PATH = "vice_users.db"
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password_hash TEXT NOT NULL,
-            salt TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            token TEXT PRIMARY KEY,
-            username TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (username) REFERENCES users(username)
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS chat_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (username) REFERENCES users(username)
-        )
-    """)
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT, salt TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS chat_history (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, role TEXT, content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
 
-def hash_password(password: str, salt: str) -> str:
+def hash_pw(password: str, salt: str) -> str:
     return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
 
-def create_session_token(username: str) -> str:
+def create_session(username: str) -> str:
     token = os.urandom(24).hex()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO sessions (token, username) VALUES (?, ?)", (token, username))
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO sessions (token, username) VALUES (?, ?)", (token, username))
     return token
 
-def get_user_from_token(token: str) -> str | None:
+def get_session_user(token: str) -> str | None:
     if not token:
         return None
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT username FROM sessions WHERE token = ?", (token,))
-    row = c.fetchone()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT username FROM sessions WHERE token = ?", (token,)).fetchone()
     return row[0] if row else None
 
-def delete_session_token(token: str):
-    if not token:
-        return
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM sessions WHERE token = ?", (token,))
-    conn.commit()
-    conn.close()
+def delete_session(token: str):
+    if token:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
 
 def register_user(username: str, password: str) -> tuple[bool, str]:
-    username = username.strip().lower()
-    if len(username) < 3 or len(password) < 4:
-        return False, "Username must be at least 3 characters and password at least 4 characters."
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT username FROM users WHERE username = ?", (username,))
-    if c.fetchone():
-        conn.close()
-        return False, "Agent handle already exists. Switch to Sign In."
-    salt = os.urandom(16).hex()
-    pw_hash = hash_password(password, salt)
-    c.execute("INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)", (username, pw_hash, salt))
-    welcome_msg = (
-        f"Welcome to **Vice City Neural Link**, Agent **{username.upper()}**. "
-        "Your encrypted chat memory block is active. How can I help you today?"
-    )
-    c.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, "assistant", welcome_msg))
-    conn.commit()
-    conn.close()
-    return True, "Account initialized!"
+    u = username.strip().lower()
+    if len(u) < 3 or len(password) < 4:
+        return False, "Handle must be 3+ chars and passcode 4+ chars."
+    with sqlite3.connect(DB_PATH) as conn:
+        if conn.execute("SELECT 1 FROM users WHERE username = ?", (u,)).fetchone():
+            return False, "Agent handle already exists. Use Sign In."
+        salt = os.urandom(16).hex()
+        conn.execute("INSERT INTO users VALUES (?, ?, ?)", (u, hash_pw(password, salt), salt))
+        welcome = f"Welcome to **Vice City Neural Link**, Agent **{u.upper()}**. Your encrypted chat block is active."
+        conn.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (u, "assistant", welcome))
+    return True, "Initialized!"
 
 def authenticate_user(username: str, password: str) -> bool:
-    username = username.strip().lower()
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT password_hash, salt FROM users WHERE username = ?", (username,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return False
-    stored_hash, salt = row
-    return hash_password(password, salt) == stored_hash
+    u = username.strip().lower()
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute("SELECT password_hash, salt FROM users WHERE username = ?", (u,)).fetchone()
+    return bool(row and hash_pw(password, row[1]) == row[0])
 
-def load_user_history(username: str) -> list[dict]:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT role, content, timestamp FROM chat_history WHERE username = ? ORDER BY id ASC", (username,))
-    rows = c.fetchall()
-    conn.close()
+def load_history(username: str) -> list[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT role, content, timestamp FROM chat_history WHERE username = ? ORDER BY id ASC", (username,)).fetchall()
     return [{"role": r[0], "content": r[1], "timestamp": r[2]} for r in rows]
 
-def save_user_message(username: str, role: str, content: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, role, content))
-    conn.commit()
-    conn.close()
+def save_msg(username: str, role: str, content: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, role, content))
 
-def wipe_user_history(username: str):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM chat_history WHERE username = ?", (username,))
-    reset_msg = f"Memory block wiped for Agent **{username.upper()}**. Fresh slate—what's next?"
-    c.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, "assistant", reset_msg))
-    conn.commit()
-    conn.close()
+def wipe_history(username: str):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM chat_history WHERE username = ?", (username,))
+        msg = f"Memory block wiped for Agent **{username.upper()}**. Fresh slate ready."
+        conn.execute("INSERT INTO chat_history (username, role, content) VALUES (?, ?, ?)", (username, "assistant", msg))
 
 init_db()
 
 # -----------------------------------------------------------------------------
-# ANIME FEMALE AVATAR & USER AVATAR (SELF-CONTAINED SVG DATA URIS)
+# AVATARS (ANIME FEMALE AI + USER)
 # -----------------------------------------------------------------------------
-ANIME_AVATAR_SVG = """
+def to_uri(svg: str) -> str:
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.strip().encode()).decode()
+
+AI_AVATAR = to_uri("""
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ff007f"/>
-      <stop offset="50%" stop-color="#7928ca"/>
-      <stop offset="100%" stop-color="#00f2fe"/>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff007f"/><stop offset="100%" stop-color="#00f2fe"/>
     </linearGradient>
-    <linearGradient id="hairGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#ff71ce"/>
-      <stop offset="100%" stop-color="#b967ff"/>
+    <linearGradient id="g2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ff71ce"/><stop offset="100%" stop-color="#b967ff"/>
     </linearGradient>
   </defs>
-  <circle cx="60" cy="60" r="58" fill="url(#bgGrad)" stroke="#00f2fe" stroke-width="3"/>
+  <circle cx="60" cy="60" r="58" fill="url(#g1)"/>
   <circle cx="60" cy="60" r="52" fill="#120822"/>
-  <path d="M28 55 Q25 95 36 105 L84 105 Q95 95 92 55 Z" fill="url(#hairGrad)"/>
+  <path d="M28 55 Q25 95 36 105 L84 105 Q95 95 92 55 Z" fill="url(#g2)"/>
   <path d="M30 108 Q60 92 90 108 L95 115 L25 115 Z" fill="#1f1135" stroke="#00f2fe" stroke-width="2"/>
   <rect x="53" y="76" width="14" height="16" rx="4" fill="#ffe0d2"/>
   <path d="M38 48 Q38 80 60 83 Q82 80 82 48 Q82 28 60 28 Q38 28 38 48 Z" fill="#ffece4"/>
-  <ellipse cx="49" cy="56" rx="5.5" ry="6.5" fill="#1a0b2e"/>
-  <ellipse cx="71" cy="56" rx="5.5" ry="6.5" fill="#1a0b2e"/>
-  <circle cx="49" cy="57" r="3.5" fill="#00f2fe"/>
-  <circle cx="71" cy="57" r="3.5" fill="#00f2fe"/>
-  <circle cx="47.5" cy="54" r="1.8" fill="#ffffff"/>
-  <circle cx="69.5" cy="54" r="1.8" fill="#ffffff"/>
-  <ellipse cx="43" cy="64" rx="4" ry="2" fill="#ff71ce" opacity="0.5"/>
-  <ellipse cx="77" cy="64" rx="4" ry="2" fill="#ff71ce" opacity="0.5"/>
+  <ellipse cx="49" cy="56" rx="5.5" ry="6.5" fill="#1a0b2e"/><ellipse cx="71" cy="56" rx="5.5" ry="6.5" fill="#1a0b2e"/>
+  <circle cx="49" cy="57" r="3.5" fill="#00f2fe"/><circle cx="71" cy="57" r="3.5" fill="#00f2fe"/>
+  <circle cx="47.5" cy="54" r="1.8" fill="#fff"/><circle cx="69.5" cy="54" r="1.8" fill="#fff"/>
   <path d="M56 69 Q60 73 64 69" stroke="#d64579" stroke-width="2" fill="none" stroke-linecap="round"/>
-  <path d="M34 52 Q36 22 60 22 Q84 22 86 52 Q78 36 70 46 Q64 33 60 47 Q54 33 48 46 Q41 36 34 52 Z" fill="url(#hairGrad)"/>
-  <rect x="32" y="46" width="6" height="14" rx="3" fill="#00f2fe"/>
-  <rect x="82" y="46" width="6" height="14" rx="3" fill="#ff007f"/>
+  <path d="M34 52 Q36 22 60 22 Q84 22 86 52 Q78 36 70 46 Q64 33 60 47 Q54 33 48 46 Q41 36 34 52 Z" fill="url(#g2)"/>
+  <rect x="32" y="46" width="6" height="14" rx="3" fill="#00f2fe"/><rect x="82" y="46" width="6" height="14" rx="3" fill="#ff007f"/>
 </svg>
-"""
+""")
 
-USER_AVATAR_SVG = """
+USER_AVATAR = to_uri("""
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <circle cx="50" cy="50" r="48" fill="#1a0b2e" stroke="#ff007f" stroke-width="4"/>
   <circle cx="50" cy="38" r="16" fill="#00f2fe"/>
   <path d="M22 84 Q50 62 78 84" fill="#ff007f"/>
 </svg>
-"""
-
-def svg_to_data_uri(svg_str: str) -> str:
-    b64 = base64.b64encode(svg_str.strip().encode("utf-8")).decode("utf-8")
-    return f"data:image/svg+xml;base64,{b64}"
-
-AI_AVATAR_URI = svg_to_data_uri(ANIME_AVATAR_SVG)
-USER_AVATAR_URI = svg_to_data_uri(USER_AVATAR_SVG)
+""")
 
 # -----------------------------------------------------------------------------
-# SESSION STATE & PERSISTENT REFRESH RESTORATION
+# SESSION STATE & REFRESH-SAFE TOKEN RESTORATION
 # -----------------------------------------------------------------------------
 if "theme_mode" not in st.session_state:
     st.session_state.theme_mode = "🌙 Dark Mode"
@@ -213,11 +136,157 @@ if "current_user" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Restore session automatically on browser refresh via URL query parameter
 if not st.session_state.authenticated:
-    url_token = st.query_params.get("session", "")
-    restored_user = get_user_from_token(url_token)
-    if restored_user:
+    token = st.query_params.get("session", "")
+    user_from_db = get_session_user(token)
+    if user_from_db:
         st.session_state.authenticated = True
-        st.session_state.current_user = restored_user
-        st.session_state.
+        st.session_state.current_user = user_from_db
+        st.session_state.messages = load_history(user_from_db)
+    elif token:
+        st.query_params.clear()
+
+# -----------------------------------------------------------------------------
+# DARK MODE & LIGHT MODE HIGH-CONTRAST CSS (LARGE READABLE FONTS)
+# -----------------------------------------------------------------------------
+def apply_theme(mode: str):
+    is_dark = (mode == "🌙 Dark Mode")
+    bg = "#0f0722" if is_dark else "#f4f6fb"
+    card = "#1b0e36" if is_dark else "#ffffff"
+    inp = "#150a2b" if is_dark else "#ffffff"
+    fg = "#ffffff" if is_dark else "#111827"
+    pink = "#ff4da6" if is_dark else "#d90467"
+    cyan = "#00f2fe" if is_dark else "#026aa7"
+    border = "#00f2fe" if is_dark else "#d90467"
+
+    st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
+    html, body, [data-testid="stAppViewContainer"], .stApp {{
+        background-color: {bg} !important;
+        color: {fg} !important;
+        font-family: 'Plus Jakarta Sans', sans-serif !important;
+        font-size: 18px !important;
+    }}
+    [data-testid="stHeader"] {{ background-color: transparent !important; }}
+    p, li, span, label, div, .stMarkdown p {{
+        color: {fg} !important;
+        font-size: 1.1rem !important;
+        line-height: 1.65 !important;
+    }}
+    h1, h2, h3, h4 {{
+        color: {fg} !important;
+        font-family: 'Orbitron', sans-serif !important;
+    }}
+    .vice-header {{
+        background: {card};
+        border: 2px solid {pink};
+        border-radius: 16px;
+        padding: 18px 26px;
+        margin-bottom: 16px;
+    }}
+    .vice-title {{
+        font-family: 'Orbitron', sans-serif !important;
+        font-weight: 800 !important;
+        font-size: 2rem !important;
+        color: {pink} !important;
+    }}
+    .vice-sub {{
+        font-size: 1.05rem !important;
+        font-weight: 700 !important;
+        color: {cyan} !important;
+    }}
+    .box-card {{
+        background-color: {card};
+        border: 2px solid {border};
+        border-left: 6px solid {pink};
+        border-radius: 14px;
+        padding: 16px 20px;
+        margin-bottom: 14px;
+    }}
+    .box-card h3 {{ font-size: 0.95rem !important; color: {pink} !important; margin-bottom: 4px !important; }}
+    .box-card p {{ font-family: 'Orbitron', sans-serif !important; font-size: 1.55rem !important; color: {cyan} !important; margin: 0 !important; }}
+    div[data-baseweb="select"] > div, div[data-baseweb="input"] > div, input {{
+        background-color: {inp} !important;
+        border: 2px solid {border} !important;
+        color: {fg} !important;
+        font-size: 1.05rem !important;
+    }}
+    ul[role="listbox"] li {{ background-color: {card} !important; color: {fg} !important; }}
+    div[data-testid="stChatMessage"] {{
+        background-color: {card} !important;
+        border: 2px solid {border} !important;
+        border-radius: 16px !important;
+        padding: 16px 20px !important;
+        margin-bottom: 14px !important;
+    }}
+    div[data-testid="stChatMessage"] p {{ color: {fg} !important; font-size: 1.12rem !important; }}
+    div[data-testid="stChatInput"] textarea {{
+        background-color: {inp} !important;
+        color: {fg} !important;
+        font-size: 1.1rem !important;
+    }}
+    .typing-box {{
+        display: inline-flex; align-items: center; gap: 10px;
+        padding: 10px 16px; border-radius: 12px;
+        background-color: {card}; border: 2px solid {cyan};
+        font-family: 'Orbitron', sans-serif !important; font-size: 0.95rem !important;
+    }}
+    .typing-dots {{ display: inline-flex; gap: 6px; }}
+    .typing-dots span {{
+        width: 9px; height: 9px; border-radius: 50%; background: {pink};
+        animation: pulse 1.2s infinite ease-in-out;
+    }}
+    .typing-dots span:nth-child(2) {{ animation-delay: 0.2s; background: #8b5cf6; }}
+    .typing-dots span:nth-child(3) {{ animation-delay: 0.4s; background: {cyan}; }}
+    @keyframes pulse {{ 0%, 80%, 100% {{ transform: scale(0.65); opacity: 0.4; }} 40% {{ transform: scale(1.2); opacity: 1; }} }}
+    .stButton > button, div[data-testid="stFormSubmitButton"] > button {{
+        background: linear-gradient(90deg, {pink}, #7928ca) !important;
+        color: #ffffff !important;
+        font-family: 'Orbitron', sans-serif !important;
+        font-size: 0.92rem !important;
+        border: 2px solid {cyan} !important;
+        border-radius: 10px !important;
+    }}
+    .stButton > button p, div[data-testid="stFormSubmitButton"] > button p {{ color: #ffffff !important; }}
+    </style>
+    """, unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# TOP HEADER & THEME MODE SELECTOR
+# -----------------------------------------------------------------------------
+h_col, t_col = st.columns([4, 1.3])
+with t_col:
+    st.session_state.theme_mode = st.selectbox(
+        "THEME",
+        ["🌙 Dark Mode", "☀️ Light Mode"],
+        index=0 if st.session_state.theme_mode == "🌙 Dark Mode" else 1,
+        label_visibility="collapsed",
+    )
+apply_theme(st.session_state.theme_mode)
+
+with h_col:
+    st.markdown("""
+    <div class="vice-header">
+        <div class="vice-title">VICE AI // LEONIDA NET</div>
+        <div class="vice-sub">FUTURISTIC LANGCHAIN × OPENROUTER NEURAL INTERFACE</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# API KEY CHECK (READS FROM LOCAL .ENV OR STREAMLIT CLOUD SECRETS)
+# -----------------------------------------------------------------------------
+api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+if not api_key:
+    try:
+        api_key = st.secrets.get("OPENROUTER_API_KEY", "").strip()
+    except Exception:
+        api_key = ""
+
+if not api_key or "PASTE_YOUR" in api_key:
+    st.error("🔒 **API Key Missing:** Add `OPENROUTER_API_KEY` in your local `.env` or Streamlit Cloud Secrets.")
+
+# -----------------------------------------------------------------------------
+# ROUTE 1: LOGIN & REGISTRATION PAGE
+# -----------------------------------------------------------------------------
+elif
