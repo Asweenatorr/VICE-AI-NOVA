@@ -306,6 +306,21 @@ div[data-testid='stAlert'] {
 }
 div[data-testid='stAlert'] * { color: var(--fg) !important; }
 
+/* ---------- select option lists: dark panel, visible text (light mode gets light panel) ---------- */
+div[data-baseweb='popover']:not(:has([data-testid='stPopoverBody'])),
+div[data-baseweb='popover']:not(:has([data-testid='stPopoverBody'])) > div,
+[data-testid='stSelectboxVirtualDropdown'], [data-testid='stSelectboxVirtualDropdown'] ul,
+ul[role='listbox'], div[data-baseweb='menu'] { background: var(--card-solid) !important; }
+div[data-baseweb='popover']:not(:has([data-testid='stPopoverBody'])) *,
+[data-testid='stSelectboxVirtualDropdown'] *, ul[role='listbox'] * {
+  background-color: transparent !important; color: var(--fg) !important; -webkit-text-fill-color: var(--fg) !important;
+  font-weight: 600 !important;
+}
+html body div[data-baseweb='popover'] [role='option']:hover, html body div[data-baseweb='popover'] li:hover,
+html body div[data-baseweb='popover'] [role='option'][aria-selected='true'],
+html body [data-testid='stSelectboxVirtualDropdown'] [role='option']:hover,
+html body [data-testid='stSelectboxVirtualDropdown'] [aria-selected='true'] { background-color: var(--glow) !important; }
+
 /* ---------- dashboard dropdown ---------- */
 [data-testid='stPopover'] button svg { fill: #ffffff !important; color: #ffffff !important; }
 [data-testid='stPopoverBody'] {
