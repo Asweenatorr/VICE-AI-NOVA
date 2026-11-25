@@ -4,6 +4,7 @@ import base64
 import hashlib
 import sqlite3
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -230,20 +231,20 @@ div[data-baseweb='popover'] li:hover, div[data-baseweb='popover'] li[aria-select
 [data-testid='stChatInput'] button { background: var(--pink) !important; border-radius: 10px !important; }
 [data-testid='stChatInput'] button svg { fill: #ffffff !important; color: #ffffff !important; }
 
-/* ---------- chat bubbles: extruded 3D slabs ---------- */
+/* ---------- chat bubbles: extruded 3D slabs (AI = magenta, YOU = cyan-blue) ---------- */
+.who-user, .who-ai { display: none !important; }
+div[data-testid='stElementContainer']:has(.who-user), div[data-testid='stElementContainer']:has(.who-ai),
+div.element-container:has(.who-user), div.element-container:has(.who-ai) { display: none !important; }
 div[data-testid='stChatMessage'] {
-  background: var(--card) !important; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  background: var(--bub-ai) !important; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   border: 2px solid var(--pink) !important; border-radius: 16px !important; padding: 16px !important; margin-bottom: 18px !important;
   box-shadow: 4px 4px 0 var(--edge), 8px 8px 0 var(--edge-deep), 0 20px 34px var(--shadow), 0 0 22px var(--glow);
   transform: perspective(1000px) rotateY(-1.4deg);
   transition: transform .25s ease, box-shadow .25s ease;
 }
-div[data-testid='stChatMessage']:has(img[alt='user avatar']) {
-  border-color: var(--cyan) !important; transform: perspective(1000px) rotateY(1.4deg);
-  box-shadow: -4px 4px 0 var(--edge), -8px 8px 0 var(--edge-deep), 0 20px 34px var(--shadow), 0 0 22px var(--glow-cyan);
-}
-div[data-testid='stChatMessage']:has([data-testid='stChatMessageAvatarUser']) {
-  border-color: var(--cyan) !important; transform: perspective(1000px) rotateY(1.4deg);
+div[data-testid='stChatMessage']:has(.who-user) {
+  background: var(--bub-user) !important; border-color: var(--cyan) !important;
+  transform: perspective(1000px) rotateY(1.4deg);
   box-shadow: -4px 4px 0 var(--edge), -8px 8px 0 var(--edge-deep), 0 20px 34px var(--shadow), 0 0 22px var(--glow-cyan);
 }
 div[data-testid='stChatMessage']:hover { transform: perspective(1000px) rotateY(0deg) translateY(-3px); }
@@ -259,19 +260,19 @@ div[data-testid='stChatMessage'] img { border-radius: 50%; box-shadow: 0 0 14px 
 @keyframes blink { from { opacity: .3; transform: scale(.85); } to { opacity: 1; transform: scale(1.1); } }
 
 /* ---------- keycap buttons ---------- */
-.stButton > button, div[data-testid='stFormSubmitButton'] > button {
+.stButton > button, div[data-testid='stFormSubmitButton'] > button, [data-testid='stPopover'] button {
   background: linear-gradient(180deg, #e0147a 0%, #8a1fd1 100%) !important; color: #ffffff !important;
   border: 2px solid var(--cyan) !important; border-radius: 12px !important;
   font-family: 'Orbitron', sans-serif !important; font-weight: 700 !important; letter-spacing: .06em;
   box-shadow: 0 6px 0 #4b1286, 0 12px 20px var(--shadow), 0 0 18px var(--glow);
   transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
 }
-.stButton > button p, div[data-testid='stFormSubmitButton'] > button p { color: #ffffff !important; font-family: 'Orbitron', sans-serif !important; font-size: 1rem !important; }
-.stButton > button:hover, div[data-testid='stFormSubmitButton'] > button:hover {
+.stButton > button p, div[data-testid='stFormSubmitButton'] > button p, [data-testid='stPopover'] button p { color: #ffffff !important; font-family: 'Orbitron', sans-serif !important; font-size: 1rem !important; }
+.stButton > button:hover, div[data-testid='stFormSubmitButton'] > button:hover, [data-testid='stPopover'] button:hover {
   transform: translateY(-2px); filter: brightness(1.12); border-color: var(--cyan) !important;
   box-shadow: 0 8px 0 #4b1286, 0 16px 24px var(--shadow), 0 0 26px var(--glow);
 }
-.stButton > button:active, div[data-testid='stFormSubmitButton'] > button:active {
+.stButton > button:active, div[data-testid='stFormSubmitButton'] > button:active, [data-testid='stPopover'] button:active {
   transform: translateY(5px); box-shadow: 0 1px 0 #4b1286, 0 4px 8px var(--shadow);
 }
 
@@ -292,6 +293,14 @@ div[data-testid='stAlert'] {
   box-shadow: 0 4px 0 var(--edge-deep), 0 0 18px var(--glow);
 }
 div[data-testid='stAlert'] * { color: var(--fg) !important; }
+
+/* ---------- dashboard dropdown ---------- */
+[data-testid='stPopover'] button svg { fill: #ffffff !important; color: #ffffff !important; }
+[data-testid='stPopoverBody'] {
+  background: var(--card-solid) !important; border: 2px solid var(--cyan) !important; border-radius: 16px !important;
+  min-width: min(580px, 92vw); max-height: 75vh;
+  box-shadow: 0 6px 0 var(--edge-deep), 0 22px 44px var(--shadow), 0 0 28px var(--glow-cyan);
+}
 
 /* ---------- scrollbar + focus + motion ---------- */
 ::-webkit-scrollbar { width: 12px; height: 12px; }
@@ -321,7 +330,7 @@ def apply_theme(mode: str):
             "pink": "#ff4da6", "cyan": "#00f2fe",
             "edge": "#6a1fc2", "edge-deep": "#2a0b57",
             "glow": "rgba(255,77,166,0.40)", "glow-cyan": "rgba(0,242,254,0.35)",
-            "shadow": "rgba(0,0,0,0.60)", "grid": "rgba(0,242,254,0.55)", "sun-op": "0.55",
+            "shadow": "rgba(0,0,0,0.60)", "bub-user": "linear-gradient(135deg,#064a6e 0%,#0b2b70 100%)", "bub-ai": "linear-gradient(135deg,#7a1070 0%,#3a0b6b 100%)", "grid": "rgba(0,242,254,0.55)", "sun-op": "0.55",
             "title-grad": "linear-gradient(90deg,#ffe14d 0%,#ff4da6 50%,#b967ff 100%)",
         }
     else:
@@ -333,13 +342,227 @@ def apply_theme(mode: str):
             "pink": "#c2005a", "cyan": "#026aa7",
             "edge": "#c58be8", "edge-deep": "#9a5fc4",
             "glow": "rgba(194,0,90,0.25)", "glow-cyan": "rgba(2,106,167,0.28)",
-            "shadow": "rgba(60,20,90,0.30)", "grid": "rgba(138,31,209,0.40)", "sun-op": "0.40",
+            "shadow": "rgba(60,20,90,0.30)", "bub-user": "#d4f1ff", "bub-ai": "#ffdcef", "grid": "rgba(138,31,209,0.40)", "sun-op": "0.40",
             "title-grad": "linear-gradient(90deg,#c2005a 0%,#8a1fd1 100%)",
         }
     root = ":root{" + "".join(f"--{k}:{val};" for k, val in v.items()) + "}"
     st.markdown("<style>" + root + THEME_CSS + "</style>", unsafe_allow_html=True)
 
-h1, h2 = st.columns([4, 1.3])
+BOT_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%;background:transparent;overflow:hidden;}
+#wrap{position:relative;width:100%;height:100%;}
+canvas{display:block;width:100%;height:100%;}
+#bubble{position:absolute;left:min(calc(50% + 125px),calc(100% - 235px));top:12%;max-width:215px;padding:9px 14px;
+ border-radius:16px 16px 16px 4px;background:#180a33;color:#fff;border:2px solid #00f2fe;
+ font:700 13px/1.35 'Orbitron',system-ui,sans-serif;letter-spacing:.05em;
+ box-shadow:0 4px 0 #6a1fc2,0 0 18px rgba(0,242,254,.45);transition:transform .15s;}
+#bubble.pop{transform:scale(1.07);}
+</style></head><body><div id="wrap"><canvas id="c"></canvas><div id="bubble">VICE-BOT online 🌴</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+var wrap=document.getElementById('wrap'),cv=document.getElementById('c'),bubble=document.getElementById('bubble');
+if(!window.THREE){bubble.textContent='3D engine offline - check internet';return;}
+var RM=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+var renderer;
+try{renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});}
+catch(e){bubble.textContent='WebGL unavailable 🌴🤖';return;}
+renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+var scene=new THREE.Scene();
+var camera=new THREE.PerspectiveCamera(40,1,0.1,100);
+camera.position.set(0,0.5,8.6);camera.lookAt(0,0.45,0);
+function resize(){var w=wrap.clientWidth||600,h=wrap.clientHeight||260;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
+resize();window.addEventListener('resize',resize);
+if(window.ResizeObserver){new ResizeObserver(resize).observe(wrap);}
+
+/* lights: Vice City neon */
+scene.add(new THREE.AmbientLight(0xffd9f2,0.75));
+var key=new THREE.DirectionalLight(0xffffff,0.9);key.position.set(3,5,6);scene.add(key);
+var pl=new THREE.PointLight(0xff4da6,1.3,20);pl.position.set(-4,2,4);scene.add(pl);
+var cl=new THREE.PointLight(0x00f2fe,1.1,20);cl.position.set(4,-1,4);scene.add(cl);
+
+function M(c,o){return new THREE.MeshStandardMaterial(Object.assign({color:c,roughness:0.4,metalness:0.15},o||{}));}
+var matHead=M(0xff7ac8,{roughness:0.3}),matBody=M(0x6a2cf0,{roughness:0.35}),
+matVisor=M(0x12062b,{roughness:0.12,metalness:0.6,emissive:0x1a0838}),
+matPink=M(0xff4da6,{emissive:0xff4da6,emissiveIntensity:0.8}),
+matCyanS=M(0x00f2fe,{emissive:0x00f2fe,emissiveIntensity:0.9}),
+matGold=M(0xffd54a,{metalness:0.9,roughness:0.25}),matHand=M(0xffece4,{roughness:0.5}),
+matLeaf=M(0x2dffb2,{emissive:0x0f9d70,emissiveIntensity:0.6}),matLeaf2=M(0x00f2fe,{emissive:0x0a8fa0,emissiveIntensity:0.6}),
+matEye=new THREE.MeshBasicMaterial({color:0x00f2fe}),matMouth=new THREE.MeshBasicMaterial({color:0xff4da6}),
+matBlush=new THREE.MeshBasicMaterial({color:0xff4da6,transparent:true,opacity:0.75});
+
+function bellyTex(){
+ var c=document.createElement('canvas');c.width=c.height=256;var g=c.getContext('2d');
+ var gr=g.createLinearGradient(0,0,0,256);gr.addColorStop(0,'#ffe14d');gr.addColorStop(0.5,'#ff4da6');gr.addColorStop(1,'#6a1fc2');
+ g.fillStyle=gr;g.beginPath();g.arc(128,128,126,0,Math.PI*2);g.fill();
+ g.fillStyle='rgba(255,240,150,0.95)';g.beginPath();g.arc(128,120,46,0,Math.PI*2);g.fill();
+ g.strokeStyle='#180a33';g.lineCap='round';g.lineWidth=8;
+ g.beginPath();g.moveTo(98,214);g.quadraticCurveTo(110,150,126,104);g.stroke();
+ g.lineWidth=7;
+ [[70,96],[84,70],[126,62],[172,74],[186,104]].forEach(function(p){
+  g.beginPath();g.moveTo(126,104);g.quadraticCurveTo((126+p[0])/2,p[1]-18,p[0],p[1]+14);g.stroke();});
+ return new THREE.CanvasTexture(c);
+}
+
+var bot=new THREE.Group();bot.scale.setScalar(0.92);scene.add(bot);
+/* body */
+var body=new THREE.Mesh(new THREE.SphereGeometry(0.72,32,24),matBody);body.scale.set(1,1.05,0.9);body.position.y=-0.75;bot.add(body);
+var belly=new THREE.Mesh(new THREE.CircleGeometry(0.36,40),new THREE.MeshBasicMaterial({map:bellyTex(),transparent:true}));
+belly.position.set(0,-0.78,0.668);bot.add(belly);
+var collar=new THREE.Mesh(new THREE.TorusGeometry(0.56,0.06,12,40),matGold);collar.rotation.x=Math.PI/2;collar.position.y=-0.3;bot.add(collar);
+[-1,1].forEach(function(s){var f=new THREE.Mesh(new THREE.SphereGeometry(0.24,20,16),matPink);f.scale.set(1,0.55,1.35);f.position.set(s*0.3,-1.5,0.12);bot.add(f);});
+
+/* head */
+var head=new THREE.Group();head.position.y=0.98;bot.add(head);
+var skull=new THREE.Mesh(new THREE.SphereGeometry(1,40,30),matHead);skull.scale.set(1.15,1,1);head.add(skull);
+var visor=new THREE.Mesh(new THREE.SphereGeometry(1,40,30),matVisor);visor.scale.set(0.86,0.55,0.5);visor.position.set(0,0.05,0.62);head.add(visor);
+var eyes=new THREE.Group();eyes.position.y=0.1;head.add(eyes);
+[-1,1].forEach(function(s){var e=new THREE.Mesh(new THREE.SphereGeometry(0.17,20,16),matEye);e.scale.set(1,1.3,0.4);e.position.set(s*0.38,0,1.06);eyes.add(e);});
+var smile=new THREE.Mesh(new THREE.TorusGeometry(0.1,0.022,8,24,Math.PI),matMouth);smile.rotation.z=Math.PI;smile.position.set(0,-0.1,1.1);head.add(smile);
+var mouthO=new THREE.Mesh(new THREE.SphereGeometry(0.07,16,12),matMouth);mouthO.scale.set(0,0,0.3);mouthO.position.set(0,-0.13,1.09);head.add(mouthO);
+[-1,1].forEach(function(s){var b=new THREE.Mesh(new THREE.SphereGeometry(0.1,16,12),matBlush);b.scale.set(1,0.6,0.2);b.position.set(s*0.66,-0.12,0.95);head.add(b);});
+/* headphones */
+var band=new THREE.Mesh(new THREE.TorusGeometry(1.2,0.05,10,48,Math.PI),matPink);band.scale.set(1,0.86,1);head.add(band);
+[-1,1].forEach(function(s){
+ var cup=new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.34,0.24,24),matPink);cup.rotation.z=Math.PI/2;cup.position.x=s*1.2;head.add(cup);
+ var ring=new THREE.Mesh(new THREE.TorusGeometry(0.26,0.035,10,28),matCyanS);ring.rotation.y=Math.PI/2;ring.position.x=s*1.33;head.add(ring);});
+/* palm-leaf antenna */
+var ant=new THREE.Group();ant.position.set(0,0.98,0);head.add(ant);
+var stem=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.45,10),matGold);stem.position.y=0.22;ant.add(stem);
+var leaves=new THREE.Group();leaves.position.y=0.46;ant.add(leaves);
+var leafGeo=new THREE.ConeGeometry(0.08,0.5,10);leafGeo.translate(0,0.25,0);
+for(var i=0;i<5;i++){var pv=new THREE.Group();pv.rotation.y=i*Math.PI*2/5;
+ var lf=new THREE.Mesh(leafGeo,i%2?matLeaf2:matLeaf);lf.rotation.z=-1.05;lf.scale.z=0.35;pv.add(lf);leaves.add(pv);}
+var ball=new THREE.Mesh(new THREE.SphereGeometry(0.13,20,16),matPink);ball.position.y=0.56;ant.add(ball);
+
+/* arms */
+function makeArm(s){var g=new THREE.Group();g.position.set(s*0.82,-0.5,0.05);
+ var a=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.1,0.5,14),matBody);a.position.y=-0.25;
+ var h=new THREE.Mesh(new THREE.SphereGeometry(0.17,20,16),matHand);h.position.y=-0.52;g.add(a);g.add(h);bot.add(g);return g;}
+var armL=makeArm(-1),armR=makeArm(1);
+
+/* neon floor rings */
+var ringA=new THREE.Mesh(new THREE.TorusGeometry(1.0,0.035,8,60),new THREE.MeshBasicMaterial({color:0x00f2fe,transparent:true,opacity:0.9}));
+ringA.rotation.x=Math.PI/2;ringA.position.y=-2.0;scene.add(ringA);
+var ringB=new THREE.Mesh(new THREE.TorusGeometry(1.45,0.03,8,60),new THREE.MeshBasicMaterial({color:0xff4da6,transparent:true,opacity:0.75}));
+ringB.rotation.x=Math.PI/2;ringB.position.y=-2.0;scene.add(ringB);
+var glow=new THREE.Mesh(new THREE.CircleGeometry(1.4,40),new THREE.MeshBasicMaterial({color:0xff4da6,transparent:true,opacity:0.14}));
+glow.rotation.x=-Math.PI/2;glow.position.y=-2.0;scene.add(glow);
+
+/* keystroke sparks */
+var parts=[],pgeo=new THREE.BoxGeometry(0.09,0.09,0.09);
+function spawn(){if(RM||parts.length>40)return;
+ var m=new THREE.Mesh(pgeo,new THREE.MeshBasicMaterial({color:Math.random()<0.5?0xff4da6:0x00f2fe,transparent:true}));
+ m.position.set((Math.random()-0.5)*0.8,0.9+Math.random()*0.3,1.0);
+ m.userData={vx:(Math.random()-0.5)*1.5,vy:-1.2-Math.random()*1.2,vz:0.5+Math.random()*0.8,life:1,spin:(Math.random()-0.5)*8};
+ scene.add(m);parts.push(m);}
+
+/* ---- typing awareness (reads the Streamlit page that hosts this iframe) ---- */
+var P=null,pdoc=null,frame=null;
+try{P=window.parent;pdoc=P.document;frame=window.frameElement;void pdoc.body;}catch(e){P=null;pdoc=null;frame=null;}
+var S={typedAt:-1e9,sentAt:-1e9,mouseAt:-1e9,mx:0,my:0,el:null,kick:0,typeAmt:0,waveAmt:0,openAmt:0,thinking:false,thinkAmt:0,blink:0,nextBlink:2};
+function isField(t){return t&&(t.tagName==='TEXTAREA'||t.tagName==='INPUT');}
+function onInput(e){if(!isField(e.target))return;S.el=e.target;S.typedAt=performance.now();S.kick=1;spawn();spawn();}
+function onKey(e){if(!isField(e.target))return;S.el=e.target;
+ if(e.key==='Enter'&&!e.shiftKey&&e.target.tagName==='TEXTAREA'){S.sentAt=performance.now();}}
+function onFocus(e){if(isField(e.target))S.el=e.target;}
+function onMove(e){S.mx=e.clientX;S.my=e.clientY;S.mouseAt=performance.now();}
+function onMoveLocal(e){var r=frame?frame.getBoundingClientRect():{left:0,top:0};S.mx=e.clientX+r.left;S.my=e.clientY+r.top;S.mouseAt=performance.now();}
+var poll=null,raf=null;
+if(P&&P.__viceBotCleanup){try{P.__viceBotCleanup();}catch(e){}}
+if(pdoc){
+ pdoc.addEventListener('input',onInput,true);pdoc.addEventListener('keydown',onKey,true);
+ pdoc.addEventListener('focusin',onFocus,true);pdoc.addEventListener('mousemove',onMove,{passive:true});
+ poll=setInterval(function(){try{S.thinking=!!pdoc.querySelector('.typing');}catch(e){}},250);
+ P.__viceBotCleanup=function(){
+  pdoc.removeEventListener('input',onInput,true);pdoc.removeEventListener('keydown',onKey,true);
+  pdoc.removeEventListener('focusin',onFocus,true);pdoc.removeEventListener('mousemove',onMove);
+  clearInterval(poll);cancelAnimationFrame(raf);};
+}
+document.addEventListener('mousemove',onMoveLocal,{passive:true});
+
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function lookTarget(now,t){
+ var yaw=Math.sin(t*0.5)*0.25,pitch=0.05+Math.sin(t*0.37)*0.08;
+ if(S.thinking)return[Math.sin(t*2.2)*0.55,-0.18];
+ if(!frame)return[yaw,pitch];
+ var fr=frame.getBoundingClientRect(),cx=fr.left+fr.width/2,cy=fr.top+fr.height*0.38,tx=null,ty=null;
+ var typing=now-S.typedAt<900,active=false;
+ try{active=pdoc&&pdoc.activeElement===S.el;}catch(e){}
+ if(S.el&&(typing||active)){
+  var r=S.el.getBoundingClientRect(),len=(S.el.value||'').length,span=Math.max(60,r.width-80);
+  tx=r.left+30+((len*9)%span);ty=r.top+r.height/2;
+ }else if(now-S.mouseAt<4000){tx=S.mx;ty=S.my;}
+ if(tx!==null){yaw=clamp((tx-cx)/(fr.width*0.45),-1,1)*0.6;pitch=clamp((ty-cy)/450,-1,1)*0.45;}
+ return[yaw,pitch];
+}
+function setStatus(txt){if(bubble.textContent!==txt){bubble.textContent=txt;bubble.classList.add('pop');setTimeout(function(){bubble.classList.remove('pop');},160);}}
+
+var last=performance.now(),t0=last;
+function tick(){
+ raf=requestAnimationFrame(tick);
+ var now=performance.now(),dt=Math.min(0.05,(now-last)/1000);last=now;var t=(now-t0)/1000;
+ var typing=now-S.typedAt<900,waving=now-S.sentAt<1500;
+ function k(a){return Math.min(1,dt*a);}
+ S.typeAmt+=((typing?1:0)-S.typeAmt)*k(10);
+ S.waveAmt+=((waving?1:0)-S.waveAmt)*k(8);
+ S.thinkAmt+=((S.thinking?1:0)-S.thinkAmt)*k(6);
+ S.openAmt+=((typing?1:(S.thinking?0.45:0))-S.openAmt)*k(12);
+ S.kick=Math.max(0,S.kick-dt*3.5);
+ var look=lookTarget(now,t),yaw=look[0],pitch=look[1];
+ head.rotation.y+=(yaw-head.rotation.y)*k(7);
+ head.rotation.x+=(pitch-head.rotation.x)*k(7);
+ head.rotation.z=Math.sin(t*1.3)*0.04+S.typeAmt*Math.sin(t*9)*0.03+(waving?Math.sin(t*10)*0.05:0);
+ bot.rotation.y=head.rotation.y*0.35;
+ bot.position.y=Math.sin(t*1.7)*(RM?0.02:0.12)+(RM?0:S.kick*0.14)+(waving?Math.abs(Math.sin(t*8))*0.1*S.waveAmt:0);
+ head.scale.set(1+S.kick*0.04,1-S.kick*0.06,1+S.kick*0.04);
+ /* eyes */
+ if(t>S.nextBlink){S.blink=1;S.nextBlink=t+2.5+Math.random()*2.5;}
+ S.blink=Math.max(0,S.blink-dt*7);
+ eyes.scale.y=(1-S.typeAmt*0.3-S.thinkAmt*0.15)*(1-0.9*Math.sin(S.blink*Math.PI));
+ eyes.position.x=clamp(yaw*0.1,-0.1,0.1)+Math.sin(t*3)*0.08*S.thinkAmt;
+ eyes.position.y=0.1+clamp(-pitch*0.08,-0.08,0.08);
+ /* mouth */
+ var o=S.openAmt;mouthO.visible=o>0.03;
+ mouthO.scale.set(o,o*(0.7+0.3*Math.abs(Math.sin(t*18))),0.3);
+ smile.scale.setScalar(Math.max(0.01,1-o*1.1));smile.visible=o<0.9;
+ /* antenna */
+ ant.rotation.z=Math.sin(t*3)*0.1+S.kick*0.4*Math.sin(t*40);ant.rotation.x=Math.cos(t*2.3)*0.08;
+ leaves.rotation.y+=dt*(0.6+S.thinkAmt*6);
+ ball.scale.setScalar(1+0.15*Math.sin(t*4)+S.thinkAmt*0.25*Math.sin(t*12));
+ matPink.emissiveIntensity=0.8+S.typeAmt*0.5+S.thinkAmt*0.4*Math.abs(Math.sin(t*6));
+ /* arms: type on a keyboard, wave on send */
+ armL.rotation.x=-1.15*S.typeAmt+Math.sin(t*28)*0.25*S.typeAmt;
+ armL.rotation.z=-0.2-Math.sin(t*1.7)*0.04;
+ armR.rotation.x=-1.15*S.typeAmt*(1-S.waveAmt)+Math.cos(t*28)*0.25*S.typeAmt*(1-S.waveAmt);
+ armR.rotation.z=0.2+2.3*S.waveAmt+Math.sin(t*14)*0.3*S.waveAmt+Math.sin(t*1.7)*0.04;
+ /* neon */
+ pl.intensity=1.3+S.typeAmt*0.8;
+ ringA.scale.setScalar(1+Math.sin(t*2)*0.04+S.kick*0.15);
+ ringB.scale.setScalar(1+Math.sin(t*2+1)*0.05+S.typeAmt*0.08);
+ /* sparks */
+ for(var i=parts.length-1;i>=0;i--){var p=parts[i],u=p.userData;
+  p.position.x+=u.vx*dt;p.position.y+=u.vy*dt;p.position.z+=u.vz*dt;p.rotation.x+=u.spin*dt;p.rotation.y+=u.spin*dt;
+  u.life-=dt*1.1;p.material.opacity=Math.max(0,u.life);
+  if(u.life<=0){scene.remove(p);p.material.dispose();parts.splice(i,1);}}
+ /* speech bubble */
+ var active=false;try{active=pdoc&&S.el&&pdoc.activeElement===S.el;}catch(e){}
+ setStatus(waving?'Transmitting! 📡':S.thinking?'Cooking up a reply... 🍹':typing?'Decoding your signal... ⌨️':active?'Listening... 👂':'VICE-BOT online 🌴');
+ renderer.render(scene,camera);
+}
+tick();
+})();
+</script></body></html>
+"""
+
+def who_tag(role: str) -> str:
+    return '<span class="who-ai"></span>' if role == "assistant" else '<span class="who-user"></span>'
+
+components.html(BOT_HTML, height=270)
+
+h1, h2, h3 = st.columns([4, 1.3, 1.3])
 with h2:
     st.session_state.theme_mode = st.selectbox("THEME", ["🌙 Dark Mode", "☀️ Light Mode"], index=0 if st.session_state.theme_mode == "🌙 Dark Mode" else 1, label_visibility="collapsed")
 apply_theme(st.session_state.theme_mode)
@@ -427,6 +650,15 @@ else:
 
     tokens = sum(int(len(m["content"].split()) * 1.3) for m in st.session_state.msgs)
 
+    with h3:
+        with st.popover("📊 DASHBOARD", use_container_width=True):
+            st.markdown(f'<div class="card">🗄️ <b>MEMORY BLOCK:</b> AGENT [{user.upper()}] | SAVED MESSAGES: {len(st.session_state.msgs)} | EST. TOKENS: {tokens} | REFRESH-LOCKED</div>', unsafe_allow_html=True)
+            st.markdown(f"**📂 {user.upper()}'s Saved History Block ({len(st.session_state.msgs)} messages)**")
+            with st.container(height=320):
+                for idx, hm in enumerate(st.session_state.msgs, 1):
+                    who = user.upper() if hm["role"] == "user" else "VICE AI"
+                    st.markdown(f"`[{idx}]` **{who}:** {hm['content']}")
+
     if page == "📊 Telemetry Dashboard":
         st.markdown(f"### ⚡ TELEMETRY HUD // AGENT: `{user.upper()}`")
         m1, m2, m3, m4 = st.columns(4)
@@ -442,23 +674,20 @@ else:
                 tag = "🧑 AGENT" if item["role"] == "user" else "🤖 VICE AI"
                 st.markdown(f"**`#{idx}` [{item.get('ts', 'SESSION')}] {tag}:** {item['content']}")
     else:
-        st.markdown(f'<div class="card">🗄️ <b>MEMORY BLOCK:</b> AGENT [{user.upper()}] | SAVED MESSAGES: {len(st.session_state.msgs)} | REFRESH-LOCKED</div>', unsafe_allow_html=True)
-        with st.expander(f"📂 View {user.upper()}'s Saved History Block ({len(st.session_state.msgs)} messages)"):
-            for idx, m in enumerate(st.session_state.msgs, 1):
-                who = user.upper() if m["role"] == "user" else "VICE AI"
-                st.markdown(f"`[{idx}]` **{who}:** {m['content']}")
-
         for m in st.session_state.msgs:
             with st.chat_message(m["role"], avatar=AI_AVATAR if m["role"] == "assistant" else USER_AVATAR):
+                st.markdown(who_tag(m["role"]), unsafe_allow_html=True)
                 st.markdown(m["content"])
 
         if prompt := st.chat_input(f"Transmit as {user.upper()} to Vice AI..."):
             save_msg(user, "user", prompt)
             st.session_state.msgs.append({"role": "user", "content": prompt})
             with st.chat_message("user", avatar=USER_AVATAR):
+                st.markdown(who_tag("user"), unsafe_allow_html=True)
                 st.markdown(prompt)
 
             with st.chat_message("assistant", avatar=AI_AVATAR):
+                st.markdown(who_tag("assistant"), unsafe_allow_html=True)
                 holder = st.empty()
                 holder.markdown('<div class="typing"><span class="dot"></span><span>VICE AI IS TYPING...</span></div>', unsafe_allow_html=True)
                 lc_msgs = [SystemMessage(content=f"You are Vice AI, a sharp futuristic assistant speaking with Agent {user}.")]
