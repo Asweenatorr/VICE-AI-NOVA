@@ -227,7 +227,14 @@ div[data-baseweb='popover'] li:hover, div[data-baseweb='popover'] li[aria-select
   background: var(--card-solid) !important; border: 2px solid var(--cyan) !important; border-radius: 16px !important;
   box-shadow: 0 4px 0 var(--edge-deep), 0 14px 30px var(--shadow), 0 0 22px var(--glow);
 }
-[data-testid='stChatInput'] textarea { border: none !important; box-shadow: none !important; background: transparent !important; }
+[data-testid='stChatInput'] div, [data-testid='stChatInput'] div[data-baseweb='textarea'],
+[data-testid='stChatInput'] div[data-baseweb='base-input'] { background: var(--card-solid) !important; border-color: transparent !important; }
+[data-testid='stChatInput'] textarea, [data-testid='stChatInputTextArea'] {
+  background: var(--card-solid) !important; color: var(--fg) !important; -webkit-text-fill-color: var(--fg) !important;
+  caret-color: var(--cyan) !important; border: none !important; box-shadow: none !important;
+  font-size: 1.15rem !important; font-weight: 600 !important;
+}
+[data-testid='stChatInput'] textarea::placeholder { color: var(--muted) !important; -webkit-text-fill-color: var(--muted) !important; opacity: 1 !important; }
 [data-testid='stChatInput'] button { background: var(--pink) !important; border-radius: 10px !important; }
 [data-testid='stChatInput'] button svg { fill: #ffffff !important; color: #ffffff !important; }
 
@@ -568,7 +575,7 @@ with h2:
 apply_theme(st.session_state.theme_mode)
 
 with h1:
-    st.markdown('<div class="card"><div class="title">VICE AI // LEONIDA NET</div><div class="sub">LANGCHAIN × OPENROUTER NEURAL INTERFACE</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="card"><div class="title">VICE AI</div><div class="sub">LANGCHAIN × OPENROUTER NEURAL INTERFACE</div></div>', unsafe_allow_html=True)
 
 api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
 if not api_key:
@@ -623,35 +630,32 @@ elif not st.session_state.auth:
 
 else:
     user = st.session_state.user
-    c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
-    with c1:
-        page = st.selectbox("NAV", ["💬 Neural Chat Interface", "📊 Telemetry Dashboard"], label_visibility="collapsed")
     MODELS = {
         "OpenRouter Auto Free Router": "openrouter/free",
         "Meta Llama 3.3 70B (Free)": "meta-llama/llama-3.3-70b-instruct:free",
         "Google Gemma 2 9B (Free)": "google/gemma-2-9b-it:free",
         "Mistral 7B Instruct (Free)": "mistralai/mistral-7b-instruct:free",
     }
-    with c2:
-        model_id = MODELS[st.selectbox("MODEL", list(MODELS.keys()), label_visibility="collapsed")]
-    with c3:
-        if st.button("WIPE BLOCK", use_container_width=True):
-            wipe_history(user)
-            st.session_state.msgs = load_history(user)
-            st.rerun()
-    with c4:
-        if st.button("LOGOUT", use_container_width=True):
-            delete_session(st.query_params.get("session", ""))
-            st.query_params.clear()
-            st.session_state.auth = False
-            st.session_state.user = None
-            st.session_state.msgs = []
-            st.rerun()
-
     tokens = sum(int(len(m["content"].split()) * 1.3) for m in st.session_state.msgs)
 
     with h3:
         with st.popover("📊 DASHBOARD", use_container_width=True):
+            page = st.selectbox("NAV", ["💬 Neural Chat Interface", "📊 Telemetry Dashboard"])
+            model_id = MODELS[st.selectbox("MODEL", list(MODELS.keys()))]
+            b1, b2 = st.columns(2)
+            with b1:
+                if st.button("WIPE BLOCK", use_container_width=True):
+                    wipe_history(user)
+                    st.session_state.msgs = load_history(user)
+                    st.rerun()
+            with b2:
+                if st.button("LOGOUT", use_container_width=True):
+                    delete_session(st.query_params.get("session", ""))
+                    st.query_params.clear()
+                    st.session_state.auth = False
+                    st.session_state.user = None
+                    st.session_state.msgs = []
+                    st.rerun()
             st.markdown(f'<div class="card">🗄️ <b>MEMORY BLOCK:</b> AGENT [{user.upper()}] | SAVED MESSAGES: {len(st.session_state.msgs)} | EST. TOKENS: {tokens} | REFRESH-LOCKED</div>', unsafe_allow_html=True)
             st.markdown(f"**📂 {user.upper()}'s Saved History Block ({len(st.session_state.msgs)} messages)**")
             with st.container(height=320):
