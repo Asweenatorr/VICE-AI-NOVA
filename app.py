@@ -5,6 +5,10 @@ import hashlib
 import sqlite3
 import streamlit as st
 import streamlit.components.v1 as components
+import re
+import io
+import html
+import httpx
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
@@ -77,6 +81,127 @@ def wipe_history(user: str):
 
 init_db()
 
+# ---------------------------------------------------------------------------
+# TOOLKIT HELPERS (PDF reading, image generation, model catalogue, rendering)
+# ---------------------------------------------------------------------------
+IMG_DIR = "generated_images"
+os.makedirs(IMG_DIR, exist_ok=True)
+IMG_TAG = re.compile(r"\[\[IMG:([\w\-.]+)\]\]")
+OR_BASE = "https://openrouter.ai/api/v1"
+
+PERSONAS = {
+    "Vice AI (default)": None,
+    "Code Mentor": "You are also a patient senior software engineer: explain clearly, show short code examples and point out pitfalls.",
+    "Creative Writer": "You are also an imaginative writer: use vivid language, strong voice and fresh ideas.",
+    "Study Tutor": "You are also a friendly tutor: break topics into simple steps, give examples and check understanding.",
+    "Concise Analyst": "You are also a sharp analyst: answer briefly, lead with the conclusion, then give key evidence.",
+    "Custom": None,
+}
+LANGS = ["Auto", "English", "Hindi", "Bengali", "Spanish", "French", "German", "Japanese", "Arabic", "Portuguese"]
+
+def extract_pdf(data: bytes, limit: int = 60000):
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return "", 0, "pypdf is not installed. Run: pip install pypdf"
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        chunks, total = [], 0
+        for pg in reader.pages:
+            t = pg.extract_text() or ""
+            chunks.append(t)
+            total += len(t)
+            if total >= limit:
+                break
+        text = "\n".join(chunks)[:limit]
+        return text, len(reader.pages), (None if text.strip() else "No selectable text found (scanned PDFs are not supported).")
+    except Exception as e:
+        return "", 0, f"Could not read PDF: {e}"
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_models(query: str = ""):
+    try:
+        r = httpx.get(f"{OR_BASE}/models{query}", timeout=15)
+        r.raise_for_status()
+        out = []
+        for m in r.json().get("data", []):
+            arch = m.get("architecture") or {}
+            try:
+                free = m["id"].endswith(":free") or float((m.get("pricing") or {}).get("prompt", 1)) == 0
+            except Exception:
+                free = False
+            out.append({"id": m["id"], "name": m.get("name", m["id"]), "ctx": m.get("context_length") or 0,
+                        "inp": arch.get("input_modalities") or [], "out": arch.get("output_modalities") or [], "free": free})
+        return out
+    except Exception:
+        return []
+
+def _opts(models):
+    free = sorted([m for m in models if m["free"]], key=lambda m: -m["ctx"])[:15]
+    paid = sorted([m for m in models if not m["free"]], key=lambda m: -m["ctx"])[:15]
+    out = {}
+    for m in free + paid:
+        lab = m["name"] + (" (Free)" if m["free"] else "")
+        if lab in out:
+            lab = f"{lab} [{m['id']}]"
+        out[lab] = m["id"]
+    return out
+
+def pdf_model_options():
+    opts = {"OpenRouter Auto Free Router": "openrouter/free"}
+    opts.update(_opts([m for m in load_models("") if "text" in m["out"] and m["id"] != "openrouter/free"]))
+    return opts
+
+def vision_model_options():
+    opts = _opts([m for m in load_models("") if "image" in m["inp"] and "text" in m["out"]])
+    return opts or {"Google Gemini 2.5 Flash": "google/gemini-2.5-flash"}
+
+def image_model_options():
+    ms = load_models("?output_modalities=image")
+    opts = _opts(ms)
+    mods = {m["id"]: m["out"] for m in ms}
+    if not opts:
+        opts = {"Google Gemini 2.5 Flash Image": "google/gemini-2.5-flash-image"}
+        mods = {"google/gemini-2.5-flash-image": ["image", "text"]}
+    return opts, mods
+
+def generate_image(key: str, model: str, modalities, prompt: str, ratio: str):
+    body = {"model": model, "messages": [{"role": "user", "content": prompt}], "modalities": modalities}
+    if ratio != "Auto":
+        body["image_config"] = {"aspect_ratio": ratio}
+    r = httpx.post(f"{OR_BASE}/chat/completions", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json=body, timeout=180)
+    if r.status_code >= 400:
+        raise RuntimeError(f"{r.status_code}: {r.text[:300]}")
+    msg = r.json()["choices"][0]["message"]
+    imgs = msg.get("images") or []
+    if not imgs:
+        return None, "png", (msg.get("content") or "")
+    url = imgs[0]["image_url"]["url"]
+    if url.startswith("data:"):
+        head, b64 = url.split(",", 1)
+        data = base64.b64decode(b64)
+        ext = "jpg" if ("jpeg" in head or "jpg" in head) else ("webp" if "webp" in head else "png")
+    else:
+        data, ext = httpx.get(url, timeout=60).content, "png"
+    return data, ext, (msg.get("content") or "")
+
+def save_image(data: bytes, ext: str) -> str:
+    fname = f"{int(time.time() * 1000)}_{os.urandom(3).hex()}.{ext}"
+    with open(os.path.join(IMG_DIR, fname), "wb") as f:
+        f.write(data)
+    return fname
+
+def render_content(content: str):
+    text = IMG_TAG.sub("", content).strip()
+    if text:
+        st.markdown(text)
+    for fn in IMG_TAG.findall(content):
+        path = os.path.join(IMG_DIR, os.path.basename(fn))
+        if os.path.exists(path):
+            st.image(path)
+        else:
+            st.caption("🖼️ (image file no longer available)")
+
 def svg_uri(svg: str) -> str:
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
 
@@ -137,7 +262,7 @@ html, body { background: var(--bg) !important; }
 }
 [data-testid='stAppViewContainer'] { background: transparent !important; position: relative; z-index: 1; }
 header[data-testid='stHeader'] { background: transparent !important; }
-[data-testid='stMain'], .block-container { position: relative; z-index: 1; }
+[data-testid='stMain'], .block-container { position: relative; }
 
 /* retro sun with horizon slices */
 .stApp::after {
@@ -320,6 +445,29 @@ html body div[data-baseweb='popover'] [role='option']:hover, html body div[data-
 html body div[data-baseweb='popover'] [role='option'][aria-selected='true'],
 html body [data-testid='stSelectboxVirtualDropdown'] [role='option']:hover,
 html body [data-testid='stSelectboxVirtualDropdown'] [aria-selected='true'] { background-color: var(--glow) !important; }
+
+/* ---------- right-side toolkit drawer ---------- */
+.st-key-tools_panel {
+  position: fixed !important; top: 0; right: 0; bottom: 0; width: min(410px, 94vw); height: 100vh; overflow-y: auto; z-index: 1000;
+  padding: 70px 20px 40px !important; background: var(--card-solid); border-left: 3px solid var(--cyan);
+  box-shadow: -12px 0 40px var(--shadow), 0 0 30px var(--glow-cyan);
+  transform: translateX(108%); visibility: hidden;
+  transition: transform .4s cubic-bezier(.2,.8,.2,1), visibility 0s linear .4s;
+}
+[data-testid='stSlider'] [role='slider'] { background: var(--pink) !important; border: 2px solid var(--cyan) !important; }
+[data-testid='stSliderThumbValue'], [data-testid='stSliderThumbValue'] * { color: var(--fg) !important; }
+[data-testid='stFileUploaderDropzone'] { background: var(--card) !important; border: 2px dashed var(--cyan) !important; border-radius: 12px !important; }
+[data-testid='stFileUploaderDropzone'] *, [data-testid='stFileUploader'] small { color: var(--fg) !important; }
+[data-testid='stFileUploaderDropzone'] button, .stDownloadButton button {
+  background: linear-gradient(180deg, #e0147a 0%, #8a1fd1 100%) !important; color: #ffffff !important;
+  border: 2px solid var(--cyan) !important; border-radius: 10px !important; box-shadow: 0 4px 0 #4b1286;
+}
+[data-testid='stFileUploaderDropzone'] button *, .stDownloadButton button * { color: #ffffff !important; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 14px; }
+.chip {
+  font-family: 'Orbitron', sans-serif; font-size: .78rem; font-weight: 700; letter-spacing: .06em; padding: 5px 12px;
+  border-radius: 999px; background: var(--card-solid); border: 2px solid var(--cyan); box-shadow: 0 3px 0 var(--edge-deep), 0 0 12px var(--glow-cyan);
+}
 
 /* ---------- dashboard dropdown ---------- */
 [data-testid='stPopover'] button svg { fill: #ffffff !important; color: #ffffff !important; }
@@ -589,7 +737,7 @@ def who_tag(role: str) -> str:
 
 components.html(BOT_HTML, height=270)
 
-h1, h3 = st.columns([5, 1.3])
+h1, h3, h4 = st.columns([5, 1.3, 1.3])
 apply_theme(st.session_state.get("theme_pick", "🌙 Dark Mode"))
 
 with h1:
@@ -680,7 +828,93 @@ else:
             with st.container(height=320):
                 for idx, hm in enumerate(st.session_state.msgs, 1):
                     who = user.upper() if hm["role"] == "user" else "VICE AI"
-                    st.markdown(f"`[{idx}]` **{who}:** {hm['content']}")
+                    st.markdown(f"`[{idx}]` **{who}:** {IMG_TAG.sub('🖼️', hm['content'])}")
+
+    st.session_state.setdefault("tools_open", False)
+
+    def toggle_tools():
+        st.session_state.tools_open = not st.session_state.tools_open
+
+    with h4:
+        st.button("🧰 TOOLS", use_container_width=True, on_click=toggle_tools, key="tools_btn")
+    if st.session_state.tools_open:
+        st.markdown("<style>.st-key-tools_panel{transform:translateX(0)!important;visibility:visible!important;transition:transform .4s cubic-bezier(.2,.8,.2,1),visibility 0s!important;}</style>", unsafe_allow_html=True)
+
+    pdf_opts = pdf_model_options()
+    vis_opts = vision_model_options()
+    img_opts, img_mods = image_model_options()
+
+    with st.container(key="tools_panel"):
+        t1, t2 = st.columns([3, 1])
+        t1.markdown("### 🧰 TOOLKIT")
+        t2.button("✕", on_click=toggle_tools, key="close_tools")
+
+        with st.expander("📄 PDF READER", expanded=True):
+            pdf_pick = st.selectbox("PDF reading model", list(pdf_opts.keys()), key="pdf_model_pick")
+            pdf_custom = st.text_input("Custom model ID (optional)", key="pdf_custom", placeholder="provider/model-name")
+            pdf_file = st.file_uploader("Upload a PDF", type=["pdf"], key="pdf_up")
+            if pdf_file is not None:
+                sig = (pdf_file.name, pdf_file.size)
+                if st.session_state.get("pdf_sig") != sig:
+                    with st.spinner("Reading PDF..."):
+                        _t, _n, _e = extract_pdf(pdf_file.getvalue())
+                    st.session_state.update(pdf_sig=sig, pdf_text=_t, pdf_pages=_n, pdf_err=_e)
+            else:
+                st.session_state.update(pdf_sig=None, pdf_text="", pdf_pages=0, pdf_err=None)
+            if st.session_state.get("pdf_err"):
+                st.warning(st.session_state.pdf_err)
+            elif st.session_state.get("pdf_text"):
+                st.success(f"Loaded {st.session_state.pdf_pages} pages ({len(st.session_state.pdf_text):,} characters).")
+            use_pdf = st.toggle("Use this PDF in chat", value=True, key="use_pdf")
+
+        with st.expander("🎨 IMAGE STUDIO"):
+            img_pick = st.selectbox("Image generation model", list(img_opts.keys()), key="img_model_pick")
+            img_custom = st.text_input("Custom model ID (optional)", key="img_custom", placeholder="provider/model-name")
+            img_ratio = st.selectbox("Aspect ratio", ["Auto", "1:1", "16:9", "9:16", "4:3", "3:4"], key="img_ratio")
+            image_mode = st.toggle("Image mode: new messages generate images", key="image_mode")
+
+        with st.expander("👁️ IMAGE ANALYSIS"):
+            vis_pick = st.selectbox("Vision model", list(vis_opts.keys()), key="vis_model_pick")
+            vis_custom = st.text_input("Custom model ID (optional)", key="vis_custom", placeholder="provider/model-name")
+            vis_file = st.file_uploader("Attach an image to analyze", type=["png", "jpg", "jpeg", "webp"], key="vis_up")
+            if vis_file is not None:
+                st.image(vis_file, width=150)
+                st.caption("Sent with every message until you remove it.")
+
+        with st.expander("🌐 WEB SEARCH"):
+            web_on = st.toggle("Search the web for live answers", key="web_on")
+
+        with st.expander("🎭 PERSONA & STYLE"):
+            persona = st.selectbox("Persona", list(PERSONAS.keys()), key="persona")
+            custom_prompt = st.text_area("Custom instructions", key="custom_prompt", height=100) if persona == "Custom" else ""
+            reply_lang = st.selectbox("Reply language", LANGS, key="reply_lang")
+            temp = st.slider("Creativity", 0.0, 1.5, 0.7, 0.05, key="temp")
+            max_tok = st.slider("Max reply length (0 = auto)", 0, 4096, 0, 128, key="max_tok")
+
+        with st.expander("💾 EXPORT"):
+            export_txt = "\n\n".join(
+                f"[{'AGENT' if mm['role'] == 'user' else 'VICE AI'}] {IMG_TAG.sub('[image]', mm['content'])}" for mm in st.session_state.msgs
+            )
+            st.download_button("Download chat (.txt)", data=export_txt, file_name=f"vice_ai_{user}.txt", mime="text/plain", use_container_width=True)
+
+    img_model_id = img_custom.strip() or img_opts[img_pick]
+    cfg = {
+        "pdf_model": pdf_custom.strip() or pdf_opts[pdf_pick],
+        "pdf_ready": bool(use_pdf and st.session_state.get("pdf_text")),
+        "pdf_name": pdf_file.name if pdf_file is not None else "",
+        "img_model": img_model_id,
+        "img_mods": img_mods.get(img_model_id, ["image", "text"]),
+        "img_ratio": img_ratio,
+        "image_mode": image_mode,
+        "vis_model": vis_custom.strip() or vis_opts[vis_pick],
+        "vis_file": vis_file,
+        "web": web_on,
+        "persona": persona,
+        "custom_prompt": custom_prompt,
+        "lang": reply_lang,
+        "temp": temp,
+        "max_tok": max_tok,
+    }
 
     if page == "📊 Telemetry Dashboard":
         st.markdown(f"### ⚡ TELEMETRY HUD // AGENT: `{user.upper()}`")
@@ -695,14 +929,27 @@ else:
         with st.container(border=True):
             for idx, item in enumerate(st.session_state.msgs, 1):
                 tag = "🧑 AGENT" if item["role"] == "user" else "🤖 VICE AI"
-                st.markdown(f"**`#{idx}` [{item.get('ts', 'SESSION')}] {tag}:** {item['content']}")
+                st.markdown(f"**`#{idx}` [{item.get('ts', 'SESSION')}] {tag}:** {IMG_TAG.sub('🖼️', item['content'])}")
     else:
+        chips = []
+        if cfg["image_mode"]:
+            chips.append("🎨 IMAGE MODE")
+        if cfg["web"]:
+            chips.append("🌐 WEB SEARCH")
+        if cfg["pdf_ready"]:
+            chips.append("📄 " + html.escape(cfg["pdf_name"]))
+        if cfg["vis_file"] is not None:
+            chips.append("👁️ IMAGE ATTACHED")
+        if chips:
+            st.markdown('<div class="chips">' + "".join(f'<span class="chip">{c}</span>' for c in chips) + "</div>", unsafe_allow_html=True)
+
         for m in st.session_state.msgs:
             with st.chat_message(m["role"], avatar=AI_AVATAR if m["role"] == "assistant" else USER_AVATAR):
                 st.markdown(who_tag(m["role"]), unsafe_allow_html=True)
-                st.markdown(m["content"])
+                render_content(m["content"])
 
-        if prompt := st.chat_input(f"Transmit as {user.upper()} to Vice AI..."):
+        placeholder = "Describe the image to generate..." if cfg["image_mode"] else f"Transmit as {user.upper()} to Vice AI..."
+        if prompt := st.chat_input(placeholder):
             save_msg(user, "user", prompt)
             st.session_state.msgs.append({"role": "user", "content": prompt})
             with st.chat_message("user", avatar=USER_AVATAR):
@@ -713,23 +960,72 @@ else:
                 st.markdown(who_tag("assistant"), unsafe_allow_html=True)
                 holder = st.empty()
                 holder.markdown('<div class="typing"><span class="dot"></span><span>VICE AI IS TYPING...</span></div>', unsafe_allow_html=True)
-                lc_msgs = [SystemMessage(content=f"You are Vice AI, a sharp futuristic assistant speaking with Agent {user}.")]
-                for m in st.session_state.msgs:
-                    lc_msgs.append(HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"]))
-                try:
-                    llm = ChatOpenAI(model=model_id, openai_api_key=api_key, openai_api_base="https://openrouter.ai/api/v1", temperature=0.7, streaming=True)
-                    reply = ""
-                    first = True
-                    for chunk in llm.stream(lc_msgs):
-                        tok = chunk.content or ""
-                        if first and tok:
-                            time.sleep(0.35)
-                            first = False
-                        reply += tok
-                        holder.markdown(reply + "▌")
-                    holder.markdown(reply)
-                    save_msg(user, "assistant", reply)
-                    st.session_state.msgs.append({"role": "assistant", "content": reply})
-                except Exception as e:
-                    holder.empty()
-                    st.error(f"Signal disrupted: {e}")
+                if cfg["image_mode"]:
+                    try:
+                        img_bytes, ext, note = generate_image(api_key, cfg["img_model"], cfg["img_mods"], prompt, cfg["img_ratio"])
+                        if img_bytes:
+                            reply = f"🎨 Image generated for: {prompt}\n[[IMG:{save_image(img_bytes, ext)}]]"
+                        else:
+                            reply = note or "The image model returned no image. Try another model in the toolkit."
+                        holder.empty()
+                        render_content(reply)
+                        save_msg(user, "assistant", reply)
+                        st.session_state.msgs.append({"role": "assistant", "content": reply})
+                    except Exception as e:
+                        holder.empty()
+                        st.error(f"Image signal disrupted: {e}")
+                else:
+                    sys_txt = f"You are Vice AI, a sharp futuristic assistant speaking with Agent {user}."
+                    if cfg["persona"] == "Custom":
+                        if cfg["custom_prompt"].strip():
+                            sys_txt += " " + cfg["custom_prompt"].strip()
+                    elif PERSONAS.get(cfg["persona"]):
+                        sys_txt += " " + PERSONAS[cfg["persona"]]
+                    if cfg["lang"] != "Auto":
+                        sys_txt += f" Always reply in {cfg['lang']}."
+                    active_model, used = model_id, []
+                    if cfg["pdf_ready"]:
+                        sys_txt += (f"\n\nThe user attached a PDF named '{cfg['pdf_name']}'. Use it when relevant.\n"
+                                    f"--- PDF TEXT START ---\n{st.session_state.pdf_text}\n--- PDF TEXT END ---")
+                        active_model = cfg["pdf_model"]
+                        used.append("📄 PDF")
+                    last_content = prompt
+                    if cfg["vis_file"] is not None:
+                        mime = cfg["vis_file"].type or "image/png"
+                        b64 = base64.b64encode(cfg["vis_file"].getvalue()).decode()
+                        last_content = [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}]
+                        active_model = cfg["vis_model"]
+                        used.append("👁️ vision")
+                    if cfg["web"]:
+                        used.append("🌐 web")
+                    used.insert(0, f"🧠 {active_model}")
+                    lc_msgs = [SystemMessage(content=sys_txt)]
+                    for m in st.session_state.msgs[:-1]:
+                        txt = IMG_TAG.sub("[image]", m["content"])
+                        lc_msgs.append(HumanMessage(content=txt) if m["role"] == "user" else AIMessage(content=txt))
+                    lc_msgs.append(HumanMessage(content=last_content))
+                    try:
+                        kw = dict(model=active_model, openai_api_key=api_key, openai_api_base=OR_BASE, temperature=cfg["temp"], streaming=True)
+                        if cfg["max_tok"]:
+                            kw["max_tokens"] = cfg["max_tok"]
+                        if cfg["web"]:
+                            kw["extra_body"] = {"plugins": [{"id": "web"}]}
+                        llm = ChatOpenAI(**kw)
+                        reply = ""
+                        first = True
+                        for chunk in llm.stream(lc_msgs):
+                            tok = chunk.content or ""
+                            if isinstance(tok, list):
+                                tok = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in tok)
+                            if first and tok:
+                                time.sleep(0.35)
+                                first = False
+                            reply += tok
+                            holder.markdown(reply + "▌")
+                        holder.markdown(reply)
+                        save_msg(user, "assistant", reply)
+                        st.session_state.msgs.append({"role": "assistant", "content": reply})
+                        st.caption(" · ".join(used))
+                    except Exception as e:
+                        holder.empty()
+                        st.error(f"Signal disrupted: {e}")
