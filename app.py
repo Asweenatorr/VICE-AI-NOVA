@@ -215,11 +215,16 @@ input::placeholder, textarea::placeholder { color: var(--muted) !important; opac
 div[data-baseweb='input'] > div:focus-within, div[data-baseweb='select'] > div:focus-within, textarea:focus {
   border-color: var(--pink) !important; box-shadow: 0 0 0 3px var(--glow), inset 0 3px 8px var(--shadow) !important;
 }
+div[data-baseweb='popover'] > div { background: var(--card-solid) !important; }
 div[data-baseweb='popover'] ul, div[data-baseweb='popover'] [role='listbox'], div[data-baseweb='menu'] {
-  background: var(--card-solid) !important; border: 2px solid var(--cyan) !important; border-radius: 10px !important;
+  background: var(--card-solid) !important; border: 2px solid var(--cyan) !important; border-radius: 12px !important;
 }
-div[data-baseweb='popover'] li, div[data-baseweb='popover'] li * { color: var(--fg) !important; background: transparent !important; }
-div[data-baseweb='popover'] li:hover, div[data-baseweb='popover'] li[aria-selected='true'] { background: var(--glow) !important; }
+div[data-baseweb='popover'] li, div[data-baseweb='popover'] [role='option'],
+div[data-baseweb='popover'] li *, div[data-baseweb='popover'] [role='option'] * {
+  background: transparent !important; color: var(--fg) !important; -webkit-text-fill-color: var(--fg) !important; font-weight: 600 !important;
+}
+div[data-baseweb='popover'] li:hover, div[data-baseweb='popover'] [role='option']:hover,
+div[data-baseweb='popover'] li[aria-selected='true'], div[data-baseweb='popover'] [role='option'][aria-selected='true'] { background: var(--glow) !important; }
 
 /* chat input dock */
 [data-testid='stBottom'], [data-testid='stBottom'] > div { background: transparent !important; }
@@ -569,10 +574,8 @@ def who_tag(role: str) -> str:
 
 components.html(BOT_HTML, height=270)
 
-h1, h2, h3 = st.columns([4, 1.3, 1.3])
-with h2:
-    st.session_state.theme_mode = st.selectbox("THEME", ["🌙 Dark Mode", "☀️ Light Mode"], index=0 if st.session_state.theme_mode == "🌙 Dark Mode" else 1, label_visibility="collapsed")
-apply_theme(st.session_state.theme_mode)
+h1, h3 = st.columns([5, 1.3])
+apply_theme(st.session_state.get("theme_pick", "🌙 Dark Mode"))
 
 with h1:
     st.markdown('<div class="card"><div class="title">VICE AI</div><div class="sub">LANGCHAIN × OPENROUTER NEURAL INTERFACE</div></div>', unsafe_allow_html=True)
@@ -640,6 +643,7 @@ else:
 
     with h3:
         with st.popover("📊 DASHBOARD", use_container_width=True):
+            st.selectbox("THEME", ["🌙 Dark Mode", "☀️ Light Mode"], key="theme_pick")
             page = st.selectbox("NAV", ["💬 Neural Chat Interface", "📊 Telemetry Dashboard"])
             model_id = MODELS[st.selectbox("MODEL", list(MODELS.keys()))]
             b1, b2 = st.columns(2)
